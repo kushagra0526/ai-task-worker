@@ -201,6 +201,10 @@ The email run is worth reading as a failure analysis.
 - **Result:** the run correctly ended as `completed_unverified` rather than claiming success.
 - **Fixes:** sent messages now have their own page, and on an agent's last step only the concluding tool is offered, so it must give a verdict.
 
+| Email Globex Logistics, re-run after the fixes (`python -m evals.run --only email/approved`) | **PASS**, `completed_verified`, 2/2 checks | 14 / 4 | 3.6 min | — | — |
+
+The re-run confirmed both fixes live: the verifier opened the sent message's page and confirmed the due date. It also exercised a failure path for the first time. `gpt-oss-120b` hit its **daily token quota mid-run**, the adapter switched to `gpt-oss-20b` automatically (logged as `model_switched`), and the run still completed and verified. Scored output is in [`evals/results.md`](evals/results.md).
+
 In the flaky-save run, the harness ledger records two write attempts:
 
 1. **`rejected` (HTTP 422):** the worker guessed a category, and the ERP's error listed the valid ones.

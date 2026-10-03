@@ -1,0 +1,14 @@
+[
+  {
+    "case": "email/approved",
+    "passed": true,
+    "status": "completed_verified",
+    "failures": [],
+    "llm_calls": 18,
+    "cost_usd": 0.0098,
+    "seconds": 216.0,
+    "questions": [],
+    "approvals": 1,
+    "run_dir": "runs\\20261004-004838-email-globex-logistics-to-confirm-we-rec"
+  }
+]
