@@ -134,7 +134,7 @@ def validate_bill(fields: dict, *, iso_dates: bool) -> tuple[dict | None, list[s
         errors.append("Currency must be USD, EUR or GBP.")
     category = fields.get("category", "")
     if category not in data.CATEGORIES:
-        errors.append("Select a category.")
+        errors.append(f"Category must be one of: {', '.join(data.CATEGORIES)}.")
 
     if vendor and number:
         dup = next(

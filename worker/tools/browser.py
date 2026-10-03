@@ -31,10 +31,11 @@ if TYPE_CHECKING:
     from ..runtime import RunState, ToolContext
 
 SNAPSHOT_JS = r"""
-() => {
+(start) => {
   const MAX_OPTIONS = 25;
-  document.querySelectorAll('[data-agent-ref]').forEach(e => e.removeAttribute('data-agent-ref'));
-  let n = 0, cellDepth = 0;
+  // Refs are stable for an element while it stays on the page, and numbering continues across pages, so a
+  // ref copied from an old page can never silently point at a different element on the new one.
+  let n = start, cellDepth = 0;
   const lines = [];
   let cur = [];
   const norm = s => (s || '').replace(/\s+/g, ' ').trim();
@@ -50,7 +51,10 @@ SNAPSHOT_JS = r"""
     if (el.labels && el.labels.length) return norm(el.labels[0].innerText);
     return norm(el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title') || el.name || '');
   };
-  const mark = el => { const r = 'e' + (++n); el.setAttribute('data-agent-ref', r); return r; };
+  const mark = el => {
+    if (el.hasAttribute('data-agent-ref')) return el.getAttribute('data-agent-ref');
+    const r = 'e' + (++n); el.setAttribute('data-agent-ref', r); return r;
+  };
   const BLOCK = new Set(['P','DIV','SECTION','ARTICLE','MAIN','HEADER','FOOTER','NAV','UL','OL','LI','TABLE','THEAD','TBODY',
                          'FORM','DL','BLOCKQUOTE','FIELDSET','ASIDE','BR','HR','CAPTION']);
   const walk = node => {
@@ -105,7 +109,7 @@ SNAPSHOT_JS = r"""
   };
   walk(document.body);
   flush();
-  return { url: location.href, title: document.title, lines };
+  return { url: location.href, title: document.title, lines, next: n };
 }
 """
 
@@ -167,6 +171,7 @@ class BrowserTab:
         self.pending_downloads: list = []
         self.last_status: int | None = None
         self.shots = 0
+        self.ref_counter = 0  # refs are never reused within a tab
         self.page.on("download", lambda download: self.pending_downloads.append(download))
         self.page.on("response", self._on_response)
 
@@ -204,8 +209,9 @@ class BrowserTab:
     def locate(self, ref: str):
         loc = self.page.locator(f'[data-agent-ref="{ref}"]')
         if loc.count() == 0:
-            raise ToolError(f"Element {ref} is not on the current page (the page probably changed). "
-                            "Use the refs from the most recent page state, or call browser_snapshot.")
+            raise ToolError(f"Element {ref} is not on the current page ({self.page.title()!r}, {self.page.url}). "
+                            "Refs belong to the page they were shown on - use refs from the latest page state, "
+                            "navigating back to the right page first if needed.")
         return loc.first
 
     def control_info(self, ref: str) -> dict | None:
@@ -228,7 +234,8 @@ class BrowserTab:
     def snapshot(self, find: str | None = None) -> str:
         if not self.page.url.startswith("http"):
             return "No page loaded yet. Use browser_navigate."
-        data = self.page.evaluate(SNAPSHOT_JS)
+        data = self.page.evaluate(SNAPSHOT_JS, self.ref_counter)
+        self.ref_counter = data["next"]
         lines = data["lines"]
         header = f"URL: {data['url']}\nTitle: {data['title']}"
         if self.last_status and self.last_status >= 400:
@@ -393,7 +400,8 @@ el => {
     return { kind: 'text', tag: 'text field', label };
   }
   if (el.isContentEditable) return { kind: 'text', tag: 'editable region', label };
-  return { kind: 'other', tag: tag.toLowerCase(), label };
+  const names = { A: 'link', BUTTON: 'button', IMG: 'image', TD: 'table cell', LI: 'list item' };
+  return { kind: 'other', tag: names[tag] || tag.toLowerCase(), label: label || norm(el.innerText).slice(0, 60) };
 }
 """
 
@@ -493,8 +501,8 @@ class BrowserFill(Tool):
                 loc.set_checked(checked)
                 shown = "checked" if checked else "unchecked"
             else:
-                raise ToolError(f"{f['ref']} is a {kind['tag']}, which cannot be filled - use browser_click. "
-                                + progress())
+                raise ToolError(f"{f['ref']} is a {kind['tag']} ({kind['label']!r}) on {tab.page.title()!r}, not a form "
+                                f"field - check you are on the right page, or use browser_click. " + progress())
             done.append(f'{kind["label"] or f["ref"]}="{shown[:60]}"')
 
         summary = f"Filled {len(done)} field(s): {', '.join(done)}" if done else "No fields filled"

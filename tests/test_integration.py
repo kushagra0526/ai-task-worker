@@ -184,3 +184,19 @@ def test_snapshot_rendering(env):
     result = run_task("Inspect.", settings, AutoUser(), llm=worker, vault=vault)
     assert result.status == "failed"
     assert data.ERP_PASSWORD not in (result.run_dir / "events.jsonl").read_text(encoding="utf-8")
+
+
+def test_ref_from_a_previous_page_is_rejected_not_misapplied(env):
+    settings, vault = env
+    refs = {}
+    worker = ScriptedLLM([
+        lambda m: [("browser_navigate", {"url": f"{BASE}/erp/login"})],
+        lambda m: refs.update(user=find_ref(last_tool_text(m), r'textbox "Username"')) or [
+            ("browser_navigate", {"url": f"{BASE}/mail"})],
+        # Stale ref from the login page, used on the inbox: must fail loudly, not hit some other element.
+        lambda m: [("browser_fill", {"fields": [{"ref": refs["user"], "value": "agent.worker"}]})],
+        lambda m: expect(last_tool_text(m), "is not on the current page", "Inbox - Northwind Mail") and [
+            ("finish", {"status": "failed", "summary": "done", "evidence": [], "self_check": "n/a"})],
+    ])
+    result = run_task("Inspect.", settings, AutoUser(), llm=worker, vault=vault)
+    assert result.status == "failed"
