@@ -101,7 +101,9 @@
     </div>
     <div class="panel"><h2>Plan</h2><ul class="plan" id="plan"><li class="empty">No plan yet.</li></ul></div>
     <div class="panel"><h2>Working memory</h2><dl class="facts" id="memory"><dd class="empty">Nothing recorded yet.</dd></dl></div>
-    <div class="panel"><h2>Run</h2><div id="usage" class="muted" style="font-size:13px">Idle.</div></div>
+    <div class="panel"><h2>Run</h2><div id="usage" class="muted" style="font-size:13px">Idle.</div>
+      <div id="context" class="muted" style="font-size:12px;margin-top:6px"></div>
+      <div id="pacing" class="muted" style="font-size:12px;margin-top:4px"></div></div>
   </aside>
   <section class="main-col">
     <div class="panel shot" id="shotPanel" style="display:none"><h2>Live view</h2><img id="shot" alt="Latest browser screenshot"></div>
@@ -183,11 +185,16 @@ function handle(e) {
   switch (e.type) {
     case "run_started":
       runDir = d.run_dir.split(/[\\/]/).pop();
-      $("usage").textContent = `Running on ${d.model} - approvals: ${d.approval_mode}`;
+      $("usage").textContent = `Running on ${d.model} (verifier: ${d.verifier_model}) - approvals: ${d.approval_mode}`;
+      $("context").textContent = ""; $("pacing").textContent = "";
       break;
     case "plan_updated": renderPlan(d.steps); break;
     case "memory_updated": memory[d.key] = d; renderMemory(); break;
     case "llm_response":
+      $("pacing").textContent = "";
+      if (d.context && d.context.budget) $("context").textContent =
+        `Context: ${d.context.est_tokens.toLocaleString()} / ${d.context.budget.toLocaleString()} tokens - ` +
+        `${d.context.turns_verbatim} recent steps verbatim, ${d.context.turns_summarised} summarised`;
       if (d.thinking) add(`${who}<details><summary>Reasoning</summary>${esc(d.thinking)}</details>`, "thought " + vcls);
       if (d.text) add(`${who}${esc(d.text)}`, vcls);
       break;
@@ -217,6 +224,20 @@ function handle(e) {
       break;
     }
     case "guard_notice": add(`${who}Harness: ${esc(d.message)}`, "notice"); break;
+    case "write_recorded": {
+      const el = pending[e.agent + ":" + d.tool];
+      const tone = d.outcome === "applied" ? "read" : d.outcome === "rejected" ? "write" : "external";
+      if (el) el.querySelector(".result-line").insertAdjacentHTML("beforebegin",
+        `<span class="badge ${tone}" title="Recorded in the harness ledger">${esc(d.outcome)}</span>`);
+      break;
+    }
+    case "duplicate_blocked":
+      add(`${who}Harness blocked a repeat of the submission from step ${d.prior_step} (previous outcome: ${esc(d.outcome)}).`, "notice");
+      break;
+    case "model_switched": add(`${who}Switched model ${esc(d.from)} &rarr; ${esc(d.to)}: ${esc(d.reason)}`, "notice"); break;
+    case "rate_limit_wait":
+      $("pacing").textContent = `Pacing: waiting ${d.seconds}s for the ${d.model} rate limit (${d.reason})`;
+      break;
     case "user_input_requested": showModal(d); break;
     case "user_input_resolved": $("modalBg").style.display = "none"; break;
     case "user_question": add(`${who}<b>Asked you:</b> ${esc(d.question)}`); break;

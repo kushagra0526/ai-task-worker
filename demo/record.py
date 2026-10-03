@@ -1,17 +1,19 @@
 """Record a demo video of real runs through the web console.
 
-    python -m demo.record                    # starts mock env + console itself, needs ANTHROPIC_API_KEY
+    python -m demo.record                    # starts mock env + console itself (needs a model API key)
     python -m demo.record --console-url http://127.0.0.1:8800   # drive an already running console
 
-Produces docs/demo.webm plus docs/console.png and docs/report.png. The video
-is a straight screen recording of the console: nothing is staged or edited,
-the captions only label which scenario is running.
+Produces docs/demo.mp4 (sped up, if ffmpeg is installed; otherwise docs/demo.webm)
+plus docs/console.png and docs/report.png. The video is a straight screen
+recording of the console during real runs: nothing is staged or edited, the
+captions only label the scenario.
 """
 
 from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -24,9 +26,11 @@ from evals.run import ensure_mock_env
 from worker.config import ROOT, Settings
 
 DOCS = ROOT / "docs"
+SPEEDUP = 3  # free-tier rate limits pace the agent; the final video plays at this speed
 SEGMENTS = [
     {
-        "caption": "1/2  The brief's example - with a fault injected: the ERP commits the bill but answers 502",
+        "caption": f"1/2  The brief's example, with a fault injected: the ERP commits the bill but answers 502  "
+                   f"(video {SPEEDUP}x speed)",
         "task": "Find the latest invoice from Acme Cloud, extract the amount and due date, enter it into our "
                 "internal system, and tell me once it is done.",
         "scenario": "flaky_submit",
@@ -80,7 +84,7 @@ def run_segment(page, seg: dict, timeout_s: int) -> None:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if page.is_visible("#modalBg"):
-            page.wait_for_timeout(2500)  # give the viewer time to read the request
+            page.wait_for_timeout(2500 * SPEEDUP)  # give the viewer time to read the request
             if page.is_visible("#yes"):
                 page.click("#yes")
             elif page.locator("#modal button[data-i]").count():
@@ -94,7 +98,7 @@ def run_segment(page, seg: dict, timeout_s: int) -> None:
         raise TimeoutError(f"segment did not finish within {timeout_s}s")
     page.wait_for_timeout(1000)
     page.locator("#final").scroll_into_view_if_needed()
-    page.wait_for_timeout(4000)
+    page.wait_for_timeout(3500 * SPEEDUP)
 
 
 def main() -> int:
@@ -133,17 +137,31 @@ def main() -> int:
         if report_url:
             page.goto(report_url)
             page.evaluate(CAPTION_JS, "Evidence report: verification checks, facts with sources, step-by-step trace with screenshots")
-            page.wait_for_timeout(2500)
+            page.wait_for_timeout(1000 * SPEEDUP)
             page.screenshot(path=str(DOCS / "report.png"))
             for _ in range(8):
-                page.mouse.wheel(0, 500)
-                page.wait_for_timeout(900)
+                page.mouse.wheel(0, 450)
+                page.wait_for_timeout(700 * SPEEDUP)
         video = page.video
         context.close()
         browser.close()
-        shutil.move(video.path(), DOCS / "demo.webm")
-    print(f"Saved {DOCS / 'demo.webm'}")
+        raw = Path(video.path())
+    print(f"Saved {encode(raw)}")
     return 0
+
+
+def encode(raw: Path) -> Path:
+    """Speed the recording up and encode H.264 MP4 when ffmpeg is available; otherwise keep the WebM."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        target = DOCS / "demo.webm"
+        shutil.move(str(raw), target)
+        return target
+    target = DOCS / "demo.mp4"
+    subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(raw), "-filter:v", f"setpts=PTS/{SPEEDUP}", "-an",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "26", "-preset", "veryfast",
+                    "-movflags", "+faststart", str(target)], check=True)
+    return target
 
 
 if __name__ == "__main__":
