@@ -48,7 +48,8 @@ Tests need no API key: `pytest -q`.
 
 ## Demo
 
-> **Demo video:** [`docs/demo.mp4`](docs/demo.mp4) is a screen recording of the console during real runs on Groq, shown at 3× speed. Free-tier rate limits pace the agent at roughly 20 seconds per step.
+- **[`docs/demo.mp4`](docs/demo.mp4): narrated walkthrough (2.5 min).** Built from the real recording of live runs on Groq and real screenshots of the app. Each clip is labelled with its playback speed, and the voiceover is Windows' built-in text-to-speech.
+- **[`docs/demo-full-3x.mp4`](docs/demo-full-3x.mp4): the full, unedited recording (4.5 min at 3× speed).** Free-tier rate limits pace the agent at roughly 20 seconds per step.
 
 ![Console after the invoice task](docs/console.png)
 
