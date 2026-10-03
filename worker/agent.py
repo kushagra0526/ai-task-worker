@@ -15,7 +15,8 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from .llm import LLM, LLMError, LLMResponse, estimate_cost
+from .context import build_view
+from .llm import LLM, ContextTooLarge, LLMError, LLMResponse, estimate_cost
 from .policy import ApprovalPolicy, Decision
 from .runtime import RunState, ToolContext
 from .tools import Tool, ToolError, ToolResult, validate_args
@@ -126,7 +127,20 @@ class AgentLoop:
 
     def _call_model(self) -> LLMResponse:
         started = time.time()
-        resp = self.llm.respond(self.system, self.messages, self.tool_defs)
+        context: dict = {}
+        for attempt in range(3):
+            budget = self.llm.message_budget(self.system, self.tool_defs)
+            view = self.messages
+            if budget is not None:  # token-budgeted provider: send a compacted view of the transcript
+                view, context = build_view(self.messages, budget, self.llm.count_tokens,
+                                           plan=self.run.plan if self.name == "worker" else None, memory=self.run.memory)
+            try:
+                resp = self.llm.respond(self.system, view, self.tool_defs)
+                break
+            except ContextTooLarge:
+                if attempt == 2:
+                    raise
+                self.llm.shrink()
         cost = estimate_cost(resp.model or self.llm.model, resp.usage)
         for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
             self.run.usage[key] += resp.usage.get(key, 0)
@@ -135,7 +149,8 @@ class AgentLoop:
         self.emit("llm_response", {
             "text": resp.text, "thinking": resp.thinking, "stop_reason": resp.stop_reason,
             "tool_calls": [c.name for c in resp.tool_calls], "usage": resp.usage,
-            "cost_usd": round(cost, 5), "latency_s": round(time.time() - started, 2),
+            "cost_usd": round(cost, 5), "latency_s": round(time.time() - started, 2), "model": resp.model,
+            "context": context,
         })
         return resp
 

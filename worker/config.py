@@ -52,10 +52,23 @@ class EnvironmentProfile:
         return "\n".join(lines)
 
 
+PROVIDER_DEFAULTS = {
+    # provider: (worker model, verifier model, effort, fallback models on daily-quota exhaustion)
+    "anthropic": ("claude-opus-5", "", "high", []),
+    # Groq rate limits are per model, so the verifier runs on a different model than the worker: twice the
+    # throughput, and a second model judging the first is more independent than self-review.
+    "groq": ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "medium", ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]),
+}
+
+
 @dataclass
 class Settings:
-    model: str = field(default_factory=lambda: os.getenv("WORKER_MODEL", "claude-opus-5"))
-    effort: str = field(default_factory=lambda: os.getenv("WORKER_EFFORT", "high"))
+    provider: str = field(default_factory=lambda: os.getenv("WORKER_PROVIDER", "anthropic"))
+    model: str = field(default_factory=lambda: os.getenv("WORKER_MODEL", ""))
+    verifier_model: str = field(default_factory=lambda: os.getenv("WORKER_VERIFIER_MODEL", ""))
+    effort: str = field(default_factory=lambda: os.getenv("WORKER_EFFORT", ""))
+    fallback_models: list[str] = field(default_factory=lambda: [
+        m.strip() for m in os.getenv("WORKER_FALLBACK_MODELS", "").split(",") if m.strip()])
     # Server-side refusal fallback (beta). Disabled automatically if the API rejects it.
     refusal_fallback: bool = field(default_factory=lambda: os.getenv("WORKER_REFUSAL_FALLBACK", "1") == "1")
     approval_mode: str = "guarded"  # guarded | strict | autonomous | read_only
@@ -67,6 +80,15 @@ class Settings:
     profile_path: Path = field(default_factory=lambda: Path(os.getenv("WORKER_PROFILE", ROOT / "environment.json")))
     workspace: Path = field(default_factory=lambda: Path(os.getenv("WORKER_WORKSPACE", ROOT / "workspace")))
     runs_dir: Path = field(default_factory=lambda: Path(os.getenv("WORKER_RUNS_DIR", ROOT / "runs")))
+
+    def __post_init__(self) -> None:
+        if self.provider not in PROVIDER_DEFAULTS:
+            raise ValueError(f"Unknown WORKER_PROVIDER '{self.provider}'. Choose from: {', '.join(PROVIDER_DEFAULTS)}")
+        model, verifier_model, effort, fallbacks = PROVIDER_DEFAULTS[self.provider]
+        self.model = self.model or model
+        self.verifier_model = self.verifier_model or verifier_model or self.model
+        self.effort = self.effort or effort
+        self.fallback_models = self.fallback_models or list(fallbacks)
 
     def profile(self) -> EnvironmentProfile:
         return EnvironmentProfile.load(self.profile_path)

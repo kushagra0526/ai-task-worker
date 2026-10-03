@@ -16,7 +16,7 @@ from . import prompts
 from .agent import AgentLoop, LoopOutcome
 from .config import Settings
 from .events import EventBus, new_run_dir
-from .llm import LLM, AnthropicLLM
+from .llm import LLM, make_llm
 from .policy import ApprovalPolicy
 from .report import write_reports
 from .runtime import RunState
@@ -57,18 +57,24 @@ def run_task(
         bus.subscribe(listener)
     run = RunState(settings=settings, profile=profile, bus=bus, vault=vault or SecretVault(profile.secrets),
                    user=user, run_dir=run_dir)
-    llm = llm or AnthropicLLM(settings.model, settings.effort, settings.refusal_fallback)
+    if llm is None:
+        llm = make_llm(settings, "worker")
+        verifier_llm = verifier_llm or make_llm(settings, "verifier")
     verifier_llm = verifier_llm or llm
+    for agent_name, model in (("worker", llm), ("verifier", verifier_llm)):
+        if hasattr(model, "notify"):  # surface rate-limit waits and model switches in the trace
+            model.notify = lambda type, data, agent=agent_name: bus.emit(type, data, agent=agent)
     today = today or date.today().isoformat()
     environment = profile.describe()
 
     bus.emit("run_started", {
-        "task": task, "model": llm.model, "approval_mode": settings.approval_mode,
+        "task": task, "model": llm.model, "verifier_model": verifier_llm.model, "provider": settings.provider,
+        "approval_mode": settings.approval_mode,
         "run_dir": str(run_dir), "secrets_available": run.vault.available,
     })
     worker = AgentLoop(
         name="worker", llm=llm, system=prompts.WORKER_SYSTEM.format(environment=environment),
-        tools=worker_tools(), policy=ApprovalPolicy(settings.approval_mode), run=run,
+        tools=_usable(worker_tools(), llm), policy=ApprovalPolicy(settings.approval_mode), run=run,
         max_steps=settings.max_steps, terminal="finish",
     )
 
@@ -116,6 +122,11 @@ def run_task(
     return result
 
 
+def _usable(tools: list, llm: LLM) -> list:
+    """Drop tools the model cannot use (screenshots are pointless for a text-only model)."""
+    return [t for t in tools if llm.supports_images or t.name != "browser_screenshot"]
+
+
 def _abnormal_end(outcome: LoopOutcome) -> tuple[str, str]:
     messages = {
         "budget": "I ran out of my step budget before finishing.",
@@ -135,7 +146,7 @@ def _verify(task: str, finish: dict, run: RunState, llm: LLM, environment: str, 
     run.bus.emit("verification_started", {"claim": finish.get("summary", "")}, agent="verifier")
     verifier = AgentLoop(
         name="verifier", llm=llm, system=prompts.VERIFIER_SYSTEM.format(environment=environment),
-        tools=verifier_tools(), policy=ApprovalPolicy("read_only"), run=run,
+        tools=_usable(verifier_tools(), llm), policy=ApprovalPolicy("read_only"), run=run,
         max_steps=settings.verifier_max_steps, terminal="submit_verdict",
     )
     outcome = verifier.run_until_terminal(

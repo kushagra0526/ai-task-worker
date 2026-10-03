@@ -6,6 +6,9 @@ downloads, secrets, approvals, guards, verification, repair, reporting)
 without API calls; model judgment is exercised by live runs.
 """
 
+import json
+
+import pytest
 from conftest import BASE, chaos, find_ref, mock_state
 
 from mock_env import data
@@ -23,23 +26,25 @@ def expect(text: str, *needles: str) -> str:
 
 
 def fill_bill_form(text: str, amount: str) -> list:
-    return [
-        ("browser_select", {"ref": find_ref(text, r'select "Vendor"'), "option": "Acme Cloud Services"}),
-        ("browser_type", {"ref": find_ref(text, r'textbox "Invoice number"'), "text": "ACME-2026-0917"}),
-        ("browser_type", {"ref": find_ref(text, r'textbox "Invoice date"'), "text": "30/09/2026"}),
-        ("browser_type", {"ref": find_ref(text, r'textbox "Due date"'), "text": "30/10/2026"}),
-        ("browser_select", {"ref": find_ref(text, r'select "Currency"'), "option": "USD"}),
-        ("browser_type", {"ref": find_ref(text, r'textbox "Amount"'), "text": amount}),
-        ("browser_select", {"ref": find_ref(text, r'select "Category"'), "option": "Software & Cloud"}),
-        ("browser_click", {"ref": find_ref(text, r'button "Save bill"')}),
+    fields = [
+        (r'select "Vendor"', "Acme Cloud Services"),
+        (r'textbox "Invoice number"', "ACME-2026-0917"),
+        (r'textbox "Invoice date"', "30/09/2026"),
+        (r'textbox "Due date"', "30/10/2026"),
+        (r'select "Currency"', "usd"),  # option labels match case-insensitively
+        (r'textbox "Amount"', amount),
+        (r'select "Category"', "Software & Cloud"),
     ]
+    return [("browser_fill", {"fields": [{"ref": find_ref(text, p), "value": v} for p, v in fields],
+                              "submit_ref": find_ref(text, r'button "Save bill"')})]
 
 
-def test_invoice_to_erp_with_validation_error_and_ambiguous_502(env):
+@pytest.mark.parametrize("budget", [None, 2200], ids=["full-context", "token-budgeted"])
+def test_invoice_to_erp_with_validation_error_and_ambiguous_502(env, budget):
     settings, vault = env
     chaos(flaky_submit=True)  # first valid submit is committed but the user sees a 502
 
-    worker = ScriptedLLM([
+    worker = ScriptedLLM(budget=budget, steps=[
         lambda m: [("update_plan", {"steps": [
             {"title": "Find latest Acme invoice in mail", "status": "in_progress"},
             {"title": "Extract amount and due date", "status": "pending"},
@@ -55,10 +60,10 @@ def test_invoice_to_erp_with_validation_error_and_ambiguous_502(env):
             ("remember", {"key": "due_date", "value": "2026-10-30", "source": "ACME-2026-0917.pdf"}),
             ("read_file", {"path": "vendor_categories.csv"})],
         lambda m: [("browser_navigate", {"url": f"{BASE}/erp/bills/new"})],
-        lambda m: [
-            ("browser_type", {"ref": find_ref(last_tool_text(m), r'textbox "Username"'), "text": "agent.worker"}),
-            ("browser_type", {"ref": find_ref(last_tool_text(m), r'password "Password"'),
-                              "text": "{{secret:erp_password}}", "submit": True})],
+        lambda m: [("browser_fill", {"fields": [
+            {"ref": find_ref(last_tool_text(m), r'textbox "Username"'), "value": "agent.worker"},
+            {"ref": find_ref(last_tool_text(m), r'password "Password"'), "value": "{{secret:erp_password}}"}],
+            "submit_ref": find_ref(last_tool_text(m), r'button "Sign in"')})],
         # Login redirects back to the form. First attempt uses a thousands separator -> validation error.
         lambda m: fill_bill_form(expect(last_tool_text(m), "# New bill"), "4,812.50"),
         lambda m: fill_bill_form(expect(last_tool_text(m), "thousands separators"), "4812.50"),
@@ -95,15 +100,20 @@ def test_invoice_to_erp_with_validation_error_and_ambiguous_502(env):
     assert data.ERP_PASSWORD not in events and data.ERP_API_KEY not in events
     assert list((result.run_dir / "screenshots").glob("*.png"))
     assert "independently verified" in result.report_path.read_text(encoding="utf-8")
+    if budget:  # every request stayed within budget, and older steps were carried as digests + memory
+        sizes = [worker.count_tokens(json.dumps(view, default=str)) for view in worker.seen]
+        assert max(sizes) <= budget, sizes
+        late = json.dumps(worker.seen[-1], default=str)
+        assert "Earlier steps (summarised)" in late and "invoice_amount = USD 4812.50" in late
 
 
 def test_outbound_email_requires_approval_and_decline_is_respected(env):
     settings, vault = env
     worker = ScriptedLLM([
         lambda m: [("browser_navigate", {"url": f"{BASE}/mail/compose?to=orders@initech.example&subject=IS-3302"})],
-        lambda m: [
-            ("browser_type", {"ref": find_ref(last_tool_text(m), r'textbox "Message"'), "text": "Received, thanks."}),
-            ("browser_click", {"ref": find_ref(last_tool_text(m), r'button "Send"')})],
+        lambda m: [("browser_fill", {
+            "fields": [{"ref": find_ref(last_tool_text(m), r'textbox "Message"'), "value": "Received, thanks."}],
+            "submit_ref": find_ref(last_tool_text(m), r'button "Send"')})],
         lambda m: expect(last_tool_text(m), "did NOT approve") and [("finish", {
             "status": "blocked", "summary": "Sending was not approved.", "evidence": [], "self_check": "n/a"})],
     ])
@@ -162,7 +172,8 @@ def test_snapshot_rendering(env):
     settings, vault = env
     worker = ScriptedLLM([
         lambda m: [("browser_navigate", {"url": f"{BASE}/erp/login"})],
-        lambda m: [("browser_type", {"ref": find_ref(last_tool_text(m), r'password "Password"'), "text": "{{secret:erp_password}}"}),
+        lambda m: [("browser_fill", {"fields": [{"ref": find_ref(last_tool_text(m), r'password "Password"'),
+                                                  "value": "{{secret:erp_password}}"}]}),
                    ("browser_snapshot", {})],
         lambda m: expect(last_tool_text(m), 'value="********"', "# Sign in") and [
             ("browser_navigate", {"url": "https://example.com"})],

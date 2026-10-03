@@ -362,71 +362,124 @@ class BrowserClick(Tool):
         return tab.after_action(ctx, f'Clicked {args["ref"]} ("{info.get("label", "")[:60]}").', "click")
 
 
-class BrowserType(Tool):
-    name = "browser_type"
-    description = ("Replace the value of a text field by ref. Use {{secret:NAME}} for credentials - the value is "
-                   "filled in by the harness and never shown to you. Set submit=true to press Enter afterwards.")
+FIELD_KIND_JS = r"""
+el => {
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  const tag = el.tagName;
+  const label = el.labels && el.labels.length ? norm(el.labels[0].innerText) : norm(el.getAttribute('aria-label') || el.name || '');
+  if (tag === 'SELECT') return { kind: 'select', tag: 'dropdown', label, options: [...el.options].map(o => norm(o.text)) };
+  if (tag === 'TEXTAREA') return { kind: 'text', tag: 'text area', label };
+  if (tag === 'INPUT') {
+    if (['checkbox', 'radio'].includes(el.type)) return { kind: el.type, tag: el.type, label };
+    if (['submit', 'button', 'reset', 'hidden', 'file', 'image'].includes(el.type)) return { kind: 'other', tag: el.type + ' button', label };
+    return { kind: 'text', tag: 'text field', label };
+  }
+  if (el.isContentEditable) return { kind: 'text', tag: 'editable region', label };
+  return { kind: 'other', tag: tag.toLowerCase(), label };
+}
+"""
+
+TRUE_WORDS = {"true", "yes", "on", "1", "checked", "check"}
+
+
+class BrowserFill(Tool):
+    name = "browser_fill"
+    description = ("Fill form fields by ref in one action: text fields take text, dropdowns take the visible option "
+                   "label, checkboxes take true/false. Fill all the fields of a form in a single call. Use "
+                   "{{secret:NAME}} for credentials - the harness fills in the value and you never see it. To submit, "
+                   "pass submit_ref (the button to click) or press_enter=true; the resulting page is returned.")
     input_schema = {
         "type": "object",
         "properties": {
-            "ref": {"type": "string"},
-            "text": {"type": "string"},
-            "submit": {"type": "boolean", "description": "Press Enter after typing (submits the form)"},
+            "fields": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"ref": {"type": "string"}, "value": {"type": "string"}},
+                    "required": ["ref", "value"],
+                },
+            },
+            "submit_ref": {"type": "string", "description": "Button to click after filling, e.g. Save or Sign in"},
+            "press_enter": {"type": "boolean", "description": "Press Enter in the last field instead of clicking a button"},
         },
-        "required": ["ref", "text"],
+        "required": ["fields"],
         "additionalProperties": False,
     }
 
     def classify(self, args: dict, ctx: "ToolContext") -> Risk:
-        if not args.get("submit"):
-            return Risk.READ
-        info = ctx.tab.control_info(args["ref"])
-        if not info:
-            return Risk.READ
-        return classify_control("", info["hasForm"], info["formMethod"])
+        if args.get("submit_ref"):
+            return BrowserClick().classify({"ref": args["submit_ref"]}, ctx)
+        if args.get("press_enter") and args["fields"]:
+            info = ctx.tab.control_info(args["fields"][-1]["ref"])
+            return classify_control("", bool(info and info["hasForm"]), info["formMethod"] if info else None)
+        return Risk.READ
+
+    def describe_action(self, args: dict, ctx: "ToolContext") -> str:
+        planned: dict[str, str] = {}
+        for f in args["fields"]:
+            loc = ctx.tab.page.locator(f'[data-agent-ref="{f["ref"]}"]')
+            label = (loc.first.evaluate(FIELD_KIND_JS)["label"] if loc.count() else "") or f["ref"]
+            planned[label] = "********" if "{{secret:" in f["value"] else f["value"]
+        info = ctx.tab.control_info(args["submit_ref"]) if args.get("submit_ref") else None
+        action = f'Fill the form and click "{info["label"]}"' if info else "Fill the form and press Enter"
+        text = f'{action} on "{ctx.tab.page.title()}" ({ctx.tab.page.url})'
+        fields = [(k, planned.pop(k, v)) for k, v in (info or {}).get("fields", [])] + list(planned.items())
+        if fields:
+            text += "\nForm contents:\n" + "\n".join(f"  {k}: {v}" for k, v in fields)
+        return text
 
     def run(self, args: dict, ctx: "ToolContext") -> ToolResult:
         tab = ctx.tab
-        loc = tab.locate(args["ref"])
-        info = loc.evaluate(CONTROL_INFO_JS)
-        if not info["isTextEntry"]:
-            raise ToolError(f"{args['ref']} is a {info['tag'].lower()}, not a text field. Use browser_select for dropdowns "
-                            "and browser_click for buttons.")
-        try:
-            value = ctx.run.vault.resolve(args["text"])
-        except KeyError as e:
-            raise ToolError(str(e.args[0]))
-        loc.fill(value)
-        if not args.get("submit"):
-            current = "********" if "{{secret:" in args["text"] else loc.input_value()
-            return ToolResult(f'Typed into {args["ref"]}; field value is now "{current}".')
-        tab.last_status = None
-        loc.press("Enter")
-        return tab.after_action(ctx, f"Typed into {args['ref']} and pressed Enter.", "submit")
+        if not args["fields"] and not args.get("submit_ref"):
+            raise ToolError("Nothing to do: pass fields and/or submit_ref.")
+        done: list[str] = []
 
+        def progress() -> str:
+            return f"Fields filled before this error: {', '.join(done) or 'none'}."
 
-class BrowserSelect(Tool):
-    name = "browser_select"
-    description = "Choose an option in a dropdown (select) by its visible label."
-    input_schema = {
-        "type": "object",
-        "properties": {"ref": {"type": "string"}, "option": {"type": "string"}},
-        "required": ["ref", "option"],
-        "additionalProperties": False,
-    }
+        for f in args["fields"]:
+            loc = tab.locate(f["ref"])
+            kind = loc.evaluate(FIELD_KIND_JS)
+            try:
+                value = ctx.run.vault.resolve(f["value"])
+            except KeyError as e:
+                raise ToolError(f"{e.args[0]} {progress()}")
+            if kind["kind"] == "select":
+                wanted = value.strip()
+                match = next((o for o in kind["options"] if o == wanted), None) or next(
+                    (o for o in kind["options"] if o.lower() == wanted.lower()), None)
+                if match is None:
+                    raise ToolError(f"No option {wanted!r} in {f['ref']} ({kind['label']}). Options: {kind['options']}. "
+                                    + progress())
+                loc.select_option(label=match)
+                shown = match
+            elif kind["kind"] == "text":
+                loc.fill(value)
+                shown = "********" if "{{secret:" in f["value"] else value
+            elif kind["kind"] in ("checkbox", "radio"):
+                checked = value.strip().lower() in TRUE_WORDS
+                loc.set_checked(checked)
+                shown = "checked" if checked else "unchecked"
+            else:
+                raise ToolError(f"{f['ref']} is a {kind['tag']}, which cannot be filled - use browser_click. "
+                                + progress())
+            done.append(f'{kind["label"] or f["ref"]}="{shown[:60]}"')
 
-    def run(self, args: dict, ctx: "ToolContext") -> ToolResult:
-        loc = ctx.tab.locate(args["ref"])
-        options = loc.evaluate("el => el.tagName === 'SELECT' ? [...el.options].map(o => o.text.trim()) : null")
-        if options is None:
-            raise ToolError(f"{args['ref']} is not a dropdown.")
-        wanted = args["option"].strip()
-        match = next((o for o in options if o == wanted), None) or next(
-            (o for o in options if o.lower() == wanted.lower()), None)
-        if match is None:
-            raise ToolError(f"No option {wanted!r} in {args['ref']}. Options are: {options}")
-        loc.select_option(label=match)
-        return ToolResult(f'Selected "{match}" in {args["ref"]}.')
+        summary = f"Filled {len(done)} field(s): {', '.join(done)}" if done else "No fields filled"
+        if args.get("submit_ref"):
+            button = tab.locate(args["submit_ref"])
+            info = button.evaluate(CONTROL_INFO_JS)
+            tab.last_status = None
+            try:
+                button.click(timeout=5000)
+            except PlaywrightTimeout:
+                raise ToolError(f"{args['submit_ref']} could not be clicked (hidden, disabled or covered). {progress()}")
+            return tab.after_action(ctx, f'{summary}; clicked {args["submit_ref"]} ("{info["label"][:40]}").', "submit")
+        if args.get("press_enter") and args["fields"]:
+            tab.last_status = None
+            tab.locate(args["fields"][-1]["ref"]).press("Enter")
+            return tab.after_action(ctx, f"{summary}; pressed Enter.", "submit")
+        return ToolResult(summary + ".")
 
 
 class BrowserScreenshot(Tool):
@@ -441,4 +494,4 @@ class BrowserScreenshot(Tool):
         return ToolResult(f"Screenshot of {ctx.tab.page.url}", images=[png], evidence=[rel])
 
 
-BROWSER_TOOLS = [BrowserNavigate(), BrowserSnapshot(), BrowserClick(), BrowserType(), BrowserSelect(), BrowserScreenshot()]
+BROWSER_TOOLS = [BrowserNavigate(), BrowserSnapshot(), BrowserClick(), BrowserFill(), BrowserScreenshot()]

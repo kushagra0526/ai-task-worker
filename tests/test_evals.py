@@ -57,8 +57,9 @@ def test_run_case_end_to_end_with_scripted_model(env):
     settings, vault = env
     worker = ScriptedLLM([
         lambda m: [("browser_navigate", {"url": f"{BASE}/mail/compose?to=dispatch@globexlogistics.example"})],
-        lambda m: [("browser_type", {"ref": find_ref(last_tool_text(m), r'textbox "Message"'), "text": "GL-7781 due 14/10/2026"}),
-                   ("browser_click", {"ref": find_ref(last_tool_text(m), r'button "Send"')})],
+        lambda m: [("browser_fill", {
+            "fields": [{"ref": find_ref(last_tool_text(m), r'textbox "Message"'), "value": "GL-7781 due 14/10/2026"}],
+            "submit_ref": find_ref(last_tool_text(m), r'button "Send"')})],
         lambda m: [("finish", {"status": "blocked", "summary": "Send declined.", "evidence": [], "self_check": "n/a"})],
     ])
     case = next(c for c in evals.CASES if c.id == "email/declined")
