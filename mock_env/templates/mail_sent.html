@@ -6,6 +6,6 @@
 {% if not sent %}<p class="muted">No sent messages.</p>{% endif %}
 <table>
   <thead><tr><th>To</th><th>Subject</th><th>Message</th></tr></thead>
-  <tbody>{% for s in sent %}<tr><td>{{ s.to }}</td><td>{{ s.subject }}</td><td>{{ s.body[:120] }}</td></tr>{% endfor %}</tbody>
+  <tbody>{% for s in sent %}<tr><td>{{ s.to }}</td><td><a href="/mail/sent/{{ s.id }}">{{ s.subject }}</a></td><td>{{ s.body[:120] }}{% if s.body|length > 120 %}...{% endif %}</td></tr>{% endfor %}</tbody>
 </table>
 {% endblock %}

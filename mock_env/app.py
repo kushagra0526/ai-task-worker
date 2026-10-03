@@ -225,6 +225,14 @@ def sent(request: Request, ok: int = 0):
     return render(request, "mail_sent.html", sent=list(reversed(STATE["sent"])), ok=ok)
 
 
+@app.get("/mail/sent/{message_id}", response_class=HTMLResponse)
+def sent_message(request: Request, message_id: str):
+    message = next((m for m in STATE["sent"] if m["id"] == message_id), None)
+    if not message:
+        raise HTTPException(404, "Message not found")
+    return render(request, "mail_sent_message.html", message=message)
+
+
 # --------------------------------------------------------------------------- ERP (HTML)
 
 

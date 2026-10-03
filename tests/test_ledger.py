@@ -53,7 +53,7 @@ def test_blind_resubmit_after_unknown_outcome_is_blocked_until_state_is_checked(
     assert "Blocked by the harness" in seen[1] and "unknown outcome" in seen[1]
     assert "Duplicate: bill AP-1043 already exists" in seen[2]
     assert len([b for b in mock_state()["bills"] if b["invoice_number"] == "ACME-2026-0917"]) == 1
-    assert [e["outcome"] for e in result.ledger] == ["applied", "unknown", "rejected"]  # login, 502 save, dup save
+    assert [e.outcome for e in result.ledger] == ["applied", "unknown", "rejected"]  # login, 502 save, dup save
     assert "duplicate_blocked" in (result.run_dir / "events.jsonl").read_text(encoding="utf-8")
 
 
@@ -69,7 +69,7 @@ def test_identical_resubmit_after_success_requires_approval(env):
     result = run_task("Enter the Acme invoice.", settings, user, llm=worker, vault=vault)
 
     assert len(user.approvals) == 1 and user.approvals[0].startswith("POSSIBLE DUPLICATE")
-    assert [e["outcome"] for e in result.ledger] == ["applied", "applied"]  # login + the one save; nothing more sent
+    assert [e.outcome for e in result.ledger] == ["applied", "applied"]  # login + the one save; nothing more sent
     report = result.report_path.read_text(encoding="utf-8")
     assert "State-changing actions" in report
     assert json.dumps("ACME-2026-0917")[1:-1] in report

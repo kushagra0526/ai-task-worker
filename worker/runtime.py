@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from .config import EnvironmentProfile, Settings
 from .events import EventBus
+from .ledger import Ledger
 from .secrets import SecretVault
 from .user import UserChannel
 
@@ -26,8 +27,7 @@ class RunState:
     # Working memory: facts the worker chose to record, with provenance.
     memory: dict[str, dict] = field(default_factory=dict)
     plan: list[dict] = field(default_factory=list)
-    # Every state-changing action and its observed outcome (applied / rejected / unknown).
-    ledger: list[dict] = field(default_factory=list)
+    ledger: Ledger = field(default_factory=Ledger)
     usage: dict[str, float] = field(default_factory=lambda: {
         "input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
         "cache_creation_input_tokens": 0, "cost_usd": 0.0, "llm_calls": 0,

@@ -1,0 +1,11 @@
+{% extends "mail_base.html" %}
+{% block title %}{{ message.subject }} - Northwind Mail{% endblock %}
+{% block content %}
+<p><a href="/mail/sent">&larr; Back to sent</a></p>
+<h1>{{ message.subject }}</h1>
+<dl class="kv">
+  <dt>From</dt><dd>ap-team@northwind.example</dd>
+  <dt>To</dt><dd>{{ message.to }}</dd>
+</dl>
+<pre class="body">{{ message.body }}</pre>
+{% endblock %}

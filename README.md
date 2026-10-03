@@ -42,7 +42,7 @@ In the console you choose an **approval mode** and an **environment scenario**:
 - **Flaky save:** the ERP commits the bill, but the caller gets a 502.
 - **Session expires** mid-task.
 
-You then watch the plan, each action with its risk class and ledger outcome, live screenshots, working memory, context size, rate-limit pacing, and the verifier's verdict. Questions and approval requests appear as dialogs. Every run writes `runs/<timestamp>-<task>/` containing `events.jsonl` (a complete replay), screenshots, and `report.html` / `report.md`.
+You then watch the plan, each action with its risk class and ledger outcome, live screenshots, working memory, context size, rate-limit pacing, and the verifier's verdict. Questions and approval requests appear as dialogs. Every run writes `runs/<timestamp>-<task>/` containing `events.jsonl` (a complete replay), screenshots, and `report.html`.
 
 Tests need no API key: `pytest -q`.
 
@@ -141,7 +141,7 @@ Fault injection makes the hard paths reproducible: a save that commits but answe
 
 The worker is told that older steps are summarised, so anything it needs later must go in memory. Memory isn't decoration here: it's what makes compaction safe. The full transcript is kept for the trace and report. On Claude the full history is sent, because prompt caching makes it cheap.
 
-**5. Pacing from the server's own signals.** The Groq adapter reads the `x-ratelimit-*` headers after each response and waits until the token bucket can cover the next request, instead of collecting 429s. It also calibrates its characters-per-token estimate from the server's reported `prompt_tokens`. A 429 waits for the server's `retry-after`. A daily-quota 429 switches to the fallback model. A "request too large" shrinks the budget and rebuilds the request. A malformed tool call is re-asked with an explicit correction.
+**5. Pacing from the server's own signals.** The Groq adapter reads the `x-ratelimit-*` headers after each response and waits until the token bucket can cover the next request, instead of collecting 429s. It also calibrates its characters-per-token estimate from the server's reported `prompt_tokens`. A 429 waits for the server's `retry-after`. A daily-quota 429 switches to the fallback model. A malformed tool call is re-asked with an explicit correction.
 
 **6. Safety lives in a policy gate, not in the prompt.** Tools only report how risky a particular call is. One policy decides allow, ask or deny per mode (`guarded`, `strict`, `autonomous`, `read_only`). The verifier runs the same tools under `read_only`, so it *cannot* change state, by construction. Approval prompts show exactly what will be submitted, including the form contents.
 
@@ -155,7 +155,7 @@ Navigation and GETs are retried silently because they're idempotent; nothing tha
 
 **8. Verification by a different agent, on a different model.** After the worker claims success, a verifier with a fresh context and an adversarial brief re-derives what must be true. It checks primary sources itself: the ERP record or API, and the original document. On Groq it runs on `gpt-oss-20b` while the worker uses `gpt-oss-120b`. That's more independent than self-review, and since rate limits are per model, it doubles throughput. The verifier also receives the harness ledger, evidence the worker can't edit. A "not verified" verdict sends its failed checks back to the worker for a bounded repair round. The final status distinguishes `completed_verified` from `completed_unverified`.
 
-**9. Guards for the ways agents go wrong.** Identical repeated calls get a "change approach" notice. Three consecutive tool failures prompt it to step back and replan; seven abort the run. A step budget triggers a wrap-up warning near the end. Ending a turn without calling a tool is nudged, then stopped. Every abnormal end still produces an honest status and a report.
+**9. Guards for the ways agents go wrong.** Identical repeated calls get a "change approach" notice. Three consecutive tool failures prompt it to step back and replan; seven abort the run. A step budget triggers a wrap-up warning near the end, and on the final step only the concluding tool (`finish` / `submit_verdict`) is offered, so an agent always ends with an honest report instead of timing out. Ending a turn without calling a tool is nudged, then stopped. Every abnormal end still produces an honest status and a report.
 
 **10. Generalisation through configuration.** Nothing in `worker/` knows about invoices or Northwind. Tasks are free text, the environment is a JSON profile, and the tools are generic. All five example tasks (invoice entry, ambiguous request, backlog reconciliation, outbound email, CSV report) run on unchanged code. The model provider sits behind one interface; Claude and Groq share everything else.
 
@@ -173,7 +173,6 @@ Navigation and GETs are retried silently because they're idempotent; nothing tha
 | Session expires | The ERP redirects to sign-in with an alert; the worker signs in again and is returned to the page it was on. |
 | Rate limit (tokens per minute) | Proactive waits from the `x-ratelimit-*` headers; on a 429, it waits for `retry-after`. |
 | Daily quota exhausted | Switches to the fallback model, logged in the trace. |
-| Request too large | Shrinks the token budget, rebuilds the request, retries. |
 | Malformed tool call (`tool_use_failed`) | Re-asks with an explicit correction, up to twice. |
 | Stale element ref, disallowed host | A clear error explains how to recover, or a policy block names the allowed hosts. |
 | Human declines an approval | The model is told not to retry, and finishes `blocked` or takes another route. |
@@ -191,6 +190,16 @@ Real runs against the simulated company on Groq's free tier (`gpt-oss-120b` work
 |---|---|---|---|---|---|
 | Invoice → ERP, normal (before batching) | `completed_verified`, 4/4 checks | 22 / 7 | 8.9 min (8.3 min) | 87.6k / 7.0k | 3,803 (cap 8,000) |
 | Invoice → ERP, **flaky save** (demo video) | `completed_verified`, 7/7 checks | 14 / 5 | 4.6 min (4.1 min) | 61.4k / 5.0k | 4,400 (cap 8,000) |
+| Email Globex Logistics, **approval required** (demo video) | sent after approval; `completed_unverified` | 11 / 15 | 7.8 min (7.0 min) | 83.2k / 6.6k | 4,883 (cap 8,000) |
+
+The email run is worth reading as a failure analysis.
+
+- **What worked:** the worker found the due date in the ERP (14 Oct 2026) and the vendor's billing address. Its Send click was classified `external` and stopped for approval, with the full email shown. After approval it sent the email and confirmed it on the Sent page.
+- **What failed:** the verifier didn't reach a verdict, and two flaws caused it:
+  1. **An environment flaw.** The Sent folder truncated message bodies at 120 characters, and there was no page showing a sent message in full. The due date sat just past the cut, so it couldn't be observed anywhere.
+  2. **A harness flaw.** Instead of submitting "inconclusive", `gpt-oss-20b` kept looking until its 15-step budget ran out, despite the wrap-up warning.
+- **Result:** the run correctly ended as `completed_unverified` rather than claiming success.
+- **Fixes:** sent messages now have their own page, and on an agent's last step only the concluding tool is offered, so it must give a verdict.
 
 In the flaky-save run, the harness ledger records two write attempts:
 
@@ -214,7 +223,7 @@ In the first run the worker picked the newest Acme invoice (not the older, alrea
 
 ## Testing
 
-`pytest -q` runs 20 tests in about 45 s with no API key. The model is replaced by a scripted policy that reads the same tool results the model would see; everything else is real: harness, Chromium, the mock app, and the SDK where it's tested.
+`pytest -q` runs 25 tests in about 45 s with no API key. The model is replaced by a scripted policy that reads the same tool results the model would see; everything else is real: harness, Chromium, the mock app, and the SDK where it's tested.
 
 - **End to end:** the invoice flow with a validation error and an ambiguous 502, run twice: once with the full context, once **under a 2,200-token budget**, asserting every request stayed under it and that older steps arrived as digests plus memory.
 - **Duplicate protection:** a blind resubmit after a 502 is blocked; after checking the bill list it's allowed (and the server rejects the duplicate); an identical resubmit after success requests approval.

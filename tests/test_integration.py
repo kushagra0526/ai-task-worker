@@ -167,6 +167,7 @@ def test_step_budget_and_repetition_guard(env):
     events = (result.run_dir / "events.jsonl").read_text(encoding="utf-8")
     assert "same browser_snapshot call 3 times" in events
     assert "steps remain in your budget" in events
+    assert worker.offered[-1] == ["finish"] and len(worker.offered[0]) > 1  # last step: only the terminal tool
 
 
 def test_snapshot_rendering(env):

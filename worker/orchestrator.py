@@ -18,7 +18,7 @@ from .config import Settings
 from .events import EventBus, new_run_dir
 from .llm import LLM, make_llm
 from .policy import ApprovalPolicy
-from .report import write_reports
+from .report import write_report
 from .runtime import RunState
 from .secrets import SecretVault
 from .tools import verifier_tools, worker_tools
@@ -34,7 +34,7 @@ class TaskResult:
     finish: dict | None = None
     verification: list[dict] = field(default_factory=list)
     memory: dict = field(default_factory=dict)
-    ledger: list[dict] = field(default_factory=list)
+    ledger: list = field(default_factory=list)
     usage: dict = field(default_factory=dict)
     report_path: Path | None = None
 
@@ -114,10 +114,10 @@ def run_task(
         run.close()
 
     result = TaskResult(status=status, summary=summary, run_dir=run_dir, finish=finish, verification=verifications,
-                        memory=run.memory, ledger=run.ledger, usage=dict(run.usage))
+                        memory=run.memory, ledger=run.ledger.entries, usage=dict(run.usage))
     bus.emit("run_finished", {"status": status, "summary": summary, "usage": run.usage,
                               "result": (finish or {}).get("result")})
-    result.report_path = write_reports(run_dir, task, result, bus.events, run.plan)
+    result.report_path = write_report(run_dir, task, result, bus.events, run.plan)
     bus.emit("report_written", {"path": str(result.report_path)})
     bus.close()
     return result
@@ -152,7 +152,7 @@ def _verify(task: str, finish: dict, run: RunState, llm: LLM, environment: str, 
     )
     outcome = verifier.run_until_terminal(
         prompts.verifier_kickoff(task, format_finish(finish), format_memory(run.memory), today,
-                                 prompts.format_ledger(run.ledger)))
+                                 prompts.format_ledger(run.ledger.entries)))
     verdict = outcome.terminal_args or {
         "verdict": "inconclusive", "checks": [],
         "summary": f"Verifier did not reach a verdict ({outcome.reason}: {outcome.detail})",

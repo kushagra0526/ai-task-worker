@@ -15,7 +15,6 @@ The agent loop depends only on the `LLM` protocol. Two production adapters:
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import time
@@ -27,8 +26,6 @@ import httpx
 
 if TYPE_CHECKING:
     from .config import Settings
-
-log = logging.getLogger(__name__)
 
 # USD per million tokens: (input, output). For Claude, cache reads bill at
 # 0.1x input and cache writes at 1.25x. Groq figures are list prices for its
@@ -48,10 +45,6 @@ Notify = Callable[[str, dict], None]
 
 class LLMError(Exception):
     """The model could not be reached or rejected the request."""
-
-
-class ContextTooLarge(LLMError):
-    """The request exceeded the provider's size limit; retry with a smaller context."""
 
 
 @dataclass
@@ -103,7 +96,7 @@ def make_llm(settings: "Settings", role: str = "worker") -> LLM:
             base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
             reasoning_effort=settings.effort, fallback_models=others,
         )
-    return AnthropicLLM(model, settings.effort, settings.refusal_fallback)
+    return AnthropicLLM(model, settings.effort)
 
 
 # ---------------------------------------------------------------------- Claude
@@ -112,10 +105,9 @@ def make_llm(settings: "Settings", role: str = "worker") -> LLM:
 class AnthropicLLM:
     supports_images = True
 
-    def __init__(self, model: str, effort: str = "high", refusal_fallback: bool = True, max_tokens: int = 32000):
+    def __init__(self, model: str, effort: str = "high", max_tokens: int = 32000):
         self.model = model
         self.effort = effort
-        self.refusal_fallback = refusal_fallback
         self.max_tokens = max_tokens
         # SDK retries 408/409/429/5xx and connection errors with backoff.
         self.client = anthropic.Anthropic(max_retries=4)
@@ -138,19 +130,9 @@ class AnthropicLLM:
             cache_control={"type": "ephemeral"},  # caches the growing transcript prefix turn over turn
         )
         try:
-            if self.refusal_fallback:
-                with self.client.beta.messages.stream(
-                    betas=["server-side-fallback-2026-07-01"], fallbacks="default", **params
-                ) as stream:
-                    msg = stream.get_final_message()
-            else:
-                with self.client.messages.stream(**params) as stream:
-                    msg = stream.get_final_message()
+            with self.client.messages.stream(**params) as stream:
+                msg = stream.get_final_message()
         except anthropic.BadRequestError as e:
-            if self.refusal_fallback and "fallback" in str(e).lower():
-                log.warning("Server-side refusal fallback not available; continuing without it.")
-                self.refusal_fallback = False
-                return self.respond(system, messages, tools)
             raise LLMError(f"Request rejected: {e.message}") from e
         except anthropic.AuthenticationError as e:
             raise LLMError("Authentication failed - set ANTHROPIC_API_KEY (see .env.example).") from e
@@ -268,8 +250,6 @@ class OpenAICompatLLM:
         self.token_limit = default_token_limit
         self._remaining: float | None = None
         self._seen_at = 0.0
-        # Share of the per-minute limit one request may use. Shrinks if the server says a request is too large.
-        self.ceiling = 0.8
         # Calibrated from real usage after every call (starts conservative).
         self.chars_per_token = 3.8
         self.expected_completion = 700.0
@@ -280,12 +260,9 @@ class OpenAICompatLLM:
         return int(len(text) / self.chars_per_token) + 1
 
     def message_budget(self, system: str, tools: list[dict]) -> int:
-        request_cap = min(self.token_limit * self.ceiling, 100_000)  # 131k context window, keep headroom
+        request_cap = min(self.token_limit * 0.8, 100_000)  # headroom under the per-minute cap and 131k window
         fixed = self.count_tokens(system + json.dumps(to_openai_tools(tools)))
         return max(800, int(request_cap - fixed - self.expected_completion))
-
-    def shrink(self) -> None:
-        self.ceiling = max(0.3, self.ceiling * 0.75)
 
     def _pace(self, needed: float) -> None:
         """Wait until the token bucket can cover this request instead of collecting 429s."""
@@ -367,8 +344,6 @@ class OpenAICompatLLM:
                 status = 400
             if status in (401, 403):
                 raise LLMError("Groq authentication failed - check GROQ_API_KEY.")
-            if status == 413 or (status == 400 and ("too large" in message.lower() or "context_length" in message.lower())):
-                raise ContextTooLarge(message)
             if status == 400 and error.get("code") == "tool_use_failed":
                 # The model produced a malformed tool call. Ask again with an explicit correction.
                 corrections += 1
@@ -444,6 +419,7 @@ class ScriptedLLM:
         self.budget = budget
         self.calls = 0
         self.seen: list[list[dict]] = []
+        self.offered: list[list[str]] = []  # tool names offered on each call
 
     def message_budget(self, system: str, tools: list[dict]) -> int | None:
         return self.budget
@@ -455,6 +431,7 @@ class ScriptedLLM:
         if not self.steps:
             raise LLMError("ScriptedLLM ran out of steps")
         self.seen.append(messages)
+        self.offered.append([t["name"] for t in tools])
         out = self.steps.pop(0)(messages)
         self.calls += 1
         if isinstance(out, str):

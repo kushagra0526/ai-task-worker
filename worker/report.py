@@ -1,7 +1,6 @@
 """Evidence report for a run: what was asked, what happened, and proof.
 
-Written as both Markdown (diff-able, pasteable) and a self-contained HTML page
-with screenshots, generated purely from the event log.
+A self-contained HTML page with screenshots, generated purely from the event log.
 """
 
 from __future__ import annotations
@@ -47,47 +46,10 @@ def _timeline(events: list["Event"]) -> list[dict]:
     return rows
 
 
-def write_reports(run_dir: Path, task: str, result: "TaskResult", events: list["Event"], plan: list[dict]) -> Path:
-    rows = _timeline(events)
-    (run_dir / "report.md").write_text(_markdown(task, result, rows, plan), encoding="utf-8")
+def write_report(run_dir: Path, task: str, result: "TaskResult", events: list["Event"], plan: list[dict]) -> Path:
     path = run_dir / "report.html"
-    path.write_text(_html(task, result, rows, plan), encoding="utf-8")
+    path.write_text(_html(task, result, _timeline(events), plan), encoding="utf-8")
     return path
-
-
-def _markdown(task: str, r: "TaskResult", rows: list[dict], plan: list[dict]) -> str:
-    out = [f"# Run report\n", f"**Task:** {task}\n", f"**Status:** {STATUS_LABEL.get(r.status, r.status)}\n",
-           f"**Summary:** {r.summary}\n"]
-    if r.finish and r.finish.get("result"):
-        out.append("## Result\n")
-        out += [f"- **{k}**: {v}" for k, v in r.finish["result"].items()]
-        out.append("")
-    for i, v in enumerate(r.verification, 1):
-        out.append(f"## Verification round {i}: {v['verdict']}\n\n{v.get('summary', '')}\n")
-        out += [f"- [{'x' if c['passed'] else ' '}] {c['claim']} - _{c['observed']}_" for c in v.get("checks", [])]
-        out.append("")
-    if plan:
-        out.append("## Final plan\n")
-        out += [f"- [{s['status']}] {s['title']}" for s in plan]
-        out.append("")
-    if r.ledger:
-        out.append("## State-changing actions (harness ledger)\n")
-        out += [f"- step {e['step']}: `{e['fingerprint'][:200]}` -> **{e['outcome']}** ({e['detail']})" for e in r.ledger]
-        out.append("")
-    if r.memory:
-        out.append("## Facts recorded\n")
-        out += [f"- **{k}** = {v['value']} _(source: {v['source']})_" for k, v in r.memory.items()]
-        out.append("")
-    out.append("## Actions\n")
-    for row in rows:
-        flag = "ERROR " if row.get("is_error") else ""
-        args = json.dumps(row["args"], ensure_ascii=False)
-        out.append(f"- `{row['agent']}#{row['step']}` **{row['tool']}** {args} {flag}[{row['risk']}/{row['decision']}]")
-    u = r.usage
-    out.append(f"\n## Usage\n\n{u.get('llm_calls', 0)} model calls, {u.get('input_tokens', 0):,} input / "
-               f"{u.get('output_tokens', 0):,} output tokens, {u.get('cache_read_input_tokens', 0):,} cache-read, "
-               f"est. ${u.get('cost_usd', 0):.3f}\n")
-    return "\n".join(out)
 
 
 def _html(task: str, r: "TaskResult", rows: list[dict], plan: list[dict]) -> str:
@@ -130,9 +92,9 @@ def _html(task: str, r: "TaskResult", rows: list[dict], plan: list[dict]) -> str
     if r.ledger:
         ledger_html = ("<h2>State-changing actions <span class='muted'>(recorded by the harness)</span></h2>"
                        "<table><tr><th>Step</th><th>Action</th><th>Outcome</th></tr>" + "".join(
-                           f"<tr><td>{e['step']}</td><td><code>{escape(e['fingerprint'][:220])}</code></td>"
-                           f"<td class='{'pass' if e['outcome'] == 'applied' else 'fail'}'>{escape(e['outcome'])} "
-                           f"<span class='muted'>({escape(e['detail'])})</span></td></tr>" for e in r.ledger) + "</table>")
+                           f"<tr><td>{e.step}</td><td><code>{escape(e.fingerprint[:220])}</code></td>"
+                           f"<td class='{'pass' if e.outcome == 'applied' else 'fail'}'>{escape(e.outcome)} "
+                           f"<span class='muted'>({escape(e.detail)})</span></td></tr>" for e in r.ledger) + "</table>")
 
     steps = []
     for row in rows:

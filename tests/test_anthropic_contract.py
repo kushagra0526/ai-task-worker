@@ -49,25 +49,18 @@ def scripted_model(body: dict) -> list[dict]:
 def test_full_run_through_real_sdk_with_api_faults(env, fake_api):
     settings, vault = env
     fake_api.responder = scripted_model
-    # 1st request: the server rejects the refusal-fallback beta -> the client must disable it and retry.
-    fake_api.fail_next(400, "invalid_request_error", "fallbacks: not available for this organization")
-    # Then transient faults the SDK's retry policy must absorb.
+    # Transient faults the SDK's retry policy must absorb.
     fake_api.fail_next(429, "rate_limit_error", "slow down", headers={"retry-after-ms": "10"})
     fake_api.fail_next(500, "api_error", "internal error")
 
-    llm = AnthropicLLM("claude-opus-5", effort="high", refusal_fallback=True)
+    llm = AnthropicLLM("claude-opus-5", effort="high")
     result = run_task("Look at the AP inbox.", settings, AutoUser(), llm=llm, vault=vault)
 
     assert result.status == "completed_verified", result.summary
     reqs = fake_api.requests
-    # Fallback beta was attempted, then dropped.
-    assert "server-side-fallback-2026-07-01" in reqs[0]["headers"].get("anthropic-beta", "")
-    assert reqs[0]["body"]["fallbacks"] == "default"
-    assert "fallbacks" not in reqs[1]["body"] and llm.refusal_fallback is False
-    # 400 + 429 + 500 + 3 worker turns + 1 verifier turn
-    assert len(reqs) == 7
+    assert len(reqs) == 6  # 429 + 500 (retried by the SDK) + 3 worker turns + 1 verifier turn
 
-    body = reqs[3]["body"]  # first successful worker request
+    body = reqs[2]["body"]  # first successful worker request
     assert body["model"] == "claude-opus-5"
     assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert body["output_config"] == {"effort": "high"}
@@ -76,7 +69,7 @@ def test_full_run_through_real_sdk_with_api_faults(env, fake_api):
     assert "{environment}" not in body["system"] and "Northwind" in body["system"]
 
     # Second turn must replay the assistant turn unchanged (thinking signature intact) and answer the tool call.
-    msgs = reqs[4]["body"]["messages"]
+    msgs = reqs[3]["body"]["messages"]
     assistant = msgs[1]["content"]
     assert [b["type"] for b in assistant] == ["thinking", "text", "tool_use"]
     assert assistant[0]["signature"].startswith("sig-") and assistant[0]["thinking"]
@@ -85,7 +78,7 @@ def test_full_run_through_real_sdk_with_api_faults(env, fake_api):
     assert "Northwind Mail" in tool_result["content"][0]["text"]
 
     # Screenshot tool results carry an image block back to the model.
-    shot = reqs[5]["body"]["messages"][-1]["content"][0]["content"]
+    shot = reqs[4]["body"]["messages"][-1]["content"][0]["content"]
     assert any(c["type"] == "image" and c["source"]["media_type"] == "image/png" for c in shot)
 
     # Usage and cost accounting from the streamed usage fields.
@@ -99,8 +92,7 @@ def test_full_run_through_real_sdk_with_api_faults(env, fake_api):
 def test_authentication_failure_ends_run_cleanly(env, fake_api):
     settings, vault = env
     fake_api.fail_next(401, "authentication_error", "invalid x-api-key")
-    result = run_task("Anything.", settings, AutoUser(), llm=AnthropicLLM("claude-opus-5", refusal_fallback=False),
-                      vault=vault)
+    result = run_task("Anything.", settings, AutoUser(), llm=AnthropicLLM("claude-opus-5"), vault=vault)
     assert result.status == "failed"
     assert "Authentication failed" in result.summary
     assert result.report_path.exists()

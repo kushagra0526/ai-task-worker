@@ -57,10 +57,10 @@ def worker_kickoff(task: str, today: str) -> str:
     return f"Today's date: {today}\n\nTask from your colleague:\n{task}"
 
 
-def format_ledger(ledger: list[dict]) -> str:
-    if not ledger:
+def format_ledger(entries: list) -> str:
+    if not entries:
         return "(none)"
-    return "\n".join(f"- step {e['step']}: {e['fingerprint'][:300]} -> {e['outcome']} ({e['detail']})" for e in ledger)
+    return "\n".join(f"- step {e.step}: {e.fingerprint[:300]} -> {e.outcome} ({e.detail})" for e in entries)
 
 
 def verifier_kickoff(task: str, claim: str, memory: str, today: str, ledger: str = "(none)") -> str:

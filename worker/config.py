@@ -69,8 +69,6 @@ class Settings:
     effort: str = field(default_factory=lambda: os.getenv("WORKER_EFFORT", ""))
     fallback_models: list[str] = field(default_factory=lambda: [
         m.strip() for m in os.getenv("WORKER_FALLBACK_MODELS", "").split(",") if m.strip()])
-    # Server-side refusal fallback (beta). Disabled automatically if the API rejects it.
-    refusal_fallback: bool = field(default_factory=lambda: os.getenv("WORKER_REFUSAL_FALLBACK", "1") == "1")
     approval_mode: str = "guarded"  # guarded | strict | autonomous | read_only
     max_steps: int = 40
     verifier_max_steps: int = 15
