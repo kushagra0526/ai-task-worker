@@ -191,7 +191,18 @@ Real runs against the simulated company on Groq's free tier (`gpt-oss-120b` work
 |---|---|---|---|---|---|
 | Invoice → ERP, normal (before batching) | `completed_verified`, 4/4 checks | 22 / 7 | 8.9 min (8.3 min) | 87.6k / 7.0k | 3,803 (cap 8,000) |
 
-In the first run the worker picked the newest Acme invoice (not the older, already-entered one, the reminder or the marketing email). It read the PDF, looked up the vendor ID through the API, created bill AP-1043 with exactly the right fields, and confirmed it with a GET. The verifier re-read the PDF, queried the ERP, and checked on its own that no newer Acme invoice exists. The run also exposed waste: the worker recorded one fact per turn, and those turns pushed the PDF out of its recent-context window, so it re-read the file and repeated the vendor lookup. That's why `remember` now takes several facts per call, plan and memory updates no longer consume the verbatim window, and small results survive whole in digests.
+In the first run the worker picked the newest Acme invoice (not the older, already-entered one, the reminder or the marketing email). It read the PDF, looked up the vendor ID through the API, created bill AP-1043 with exactly the right fields, and confirmed it with a GET. The verifier re-read the PDF, queried the ERP, and checked on its own that no newer Acme invoice exists.
+
+**What the live traces changed.** Each `events.jsonl` is a full replay, and the live runs exposed problems no scripted test had:
+
+1. **Wasted turns.** The first run recorded one fact per turn, and those bookkeeping turns pushed the PDF out of the recent-context window, so the worker re-read it and repeated the vendor lookup.
+   - **Fix:** `remember` takes several facts per call, plan and memory updates no longer consume the verbatim window, and short documents and API answers survive whole in digests.
+   - **Effect:** in the next run, six facts went into one call.
+2. **Stale element refs.** In a later run the worker filled the login form using refs it had seen on the login page several steps earlier, while it was actually on the inbox. Refs restarted at `e1` on every snapshot, so a stale ref pointed at a different element, here a link. The tool refused it because a link isn't fillable, but a click would have hit the wrong thing.
+   - **Fix:** refs stay stable for an element while it remains on the page and are never reused across pages. A stale ref now fails with "not on the current page ('Inbox - Northwind Mail')".
+   - **Regression test:** `test_ref_from_a_previous_page_is_rejected_not_misapplied`.
+3. **Errors that don't help recovery.** "e1 is a a, which cannot be filled" named neither the element nor the page. The ERP's "Select a category." didn't list the options.
+   - **Fix:** tool errors name the element and the current page, and the ERP lists the valid categories, as a well-behaved API should.
 
 ## Testing
 
