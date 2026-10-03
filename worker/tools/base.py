@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +38,14 @@ class Tool:
     def describe_action(self, args: dict, ctx: "ToolContext") -> str:
         """Human-readable description used in approval prompts."""
         return f"{self.name}({', '.join(f'{k}={v!r}' for k, v in args.items())})"
+
+    def fingerprint(self, args: dict, ctx: "ToolContext") -> str:
+        """Identity of the side effect a state-changing call would cause, used to detect repeats."""
+        return f"{self.name} {json.dumps(args, sort_keys=True)}"
+
+    def origin(self, args: dict, ctx: "ToolContext") -> str:
+        """Where a state-changing call is made from (a page URL, an endpoint)."""
+        return ""
 
     def run(self, args: dict, ctx: "ToolContext") -> ToolResult:
         raise NotImplementedError

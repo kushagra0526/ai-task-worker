@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from .context import build_view
 from .llm import LLM, ContextTooLarge, LLMError, LLMResponse, estimate_cost
-from .policy import ApprovalPolicy, Decision
+from .policy import ApprovalPolicy, Decision, Risk
 from .runtime import RunState, ToolContext
 from .tools import Tool, ToolError, ToolResult, validate_args
 
@@ -194,8 +194,31 @@ class AgentLoop:
                                 f"({self.policy.mode}). Choose another way to achieve the goal.", is_error=True)
             self.emit("tool_result", {"tool": name, "is_error": True, "text": result.text, "evidence": []})
             return result
+
+        # Duplicate protection: compare this state change with what the ledger says already happened.
+        fingerprint, origin, duplicate_note = None, "", ""
+        if risk is not Risk.READ:
+            try:
+                fingerprint, origin = tool.fingerprint(args, self.ctx), tool.origin(args, self.ctx)
+            except Exception:
+                fingerprint = None
+            prior = next((e for e in reversed(self.run.ledger) if fingerprint and e["fingerprint"] == fingerprint), None)
+            if prior and prior["outcome"] == "unknown" and not prior["checked"]:
+                return self._refuse(name, prior, (
+                    f"Blocked by the harness: an identical submission at step {prior['step']} had an unknown outcome "
+                    f"({prior['detail']}). Repeating it blindly could create a duplicate. First check the current state "
+                    "somewhere other than the form itself (e.g. the list of records, or a GET on the API); if it really "
+                    "was not applied, you may then submit again."))
+            if prior and prior["outcome"] == "applied":
+                if self.policy.mode not in ("guarded", "strict"):
+                    return self._refuse(name, prior, f"Blocked by the harness: an identical submission already succeeded "
+                                                     f"at step {prior['step']}. Repeating it would create a duplicate.")
+                decision = Decision.ASK
+                duplicate_note = (f"POSSIBLE DUPLICATE: an identical submission already succeeded at step "
+                                  f"{prior['step']}.\n")
+
         if decision is Decision.ASK:
-            description = tool.describe_action(args, self.ctx)
+            description = duplicate_note + tool.describe_action(args, self.ctx)
             self.emit("approval_requested", {"tool": name, "risk": risk.value, "action": description})
             approved = self.run.user.approve(description, risk.value, f"'{risk.value}' actions need human approval")
             self.emit("approval_decision", {"tool": name, "approved": approved})
@@ -214,11 +237,47 @@ class AgentLoop:
             first_line = (str(e).strip().splitlines() or [""])[0]
             result = ToolResult(f"{name} failed unexpectedly: {type(e).__name__}: {first_line[:300]}", is_error=True)
         result.text = self.run.vault.mask(result.text)
+        if risk is Risk.READ:
+            self._note_observation(name, args, result)
+        elif fingerprint:
+            self._record_write(name, fingerprint, origin, result)
         self.emit("tool_result", {
             "tool": name, "is_error": result.is_error, "text": result.text[:4000],
             "evidence": result.evidence, "duration_s": round(time.time() - started, 2), "meta": result.meta,
         })
         return result
+
+    def _refuse(self, name: str, prior: dict, text: str) -> ToolResult:
+        self.emit("duplicate_blocked", {"tool": name, "prior_step": prior["step"], "outcome": prior["outcome"]})
+        self.emit("tool_result", {"tool": name, "is_error": True, "text": text, "evidence": []})
+        return ToolResult(text, is_error=True)
+
+    def _record_write(self, tool: str, fingerprint: str, origin: str, result: ToolResult) -> None:
+        status = result.meta.get("status")
+        if result.meta.get("applied"):
+            outcome, detail = "applied", "completed locally"
+        elif isinstance(status, int):
+            outcome = "applied" if status < 400 else "rejected" if status < 500 else "unknown"
+            detail = f"HTTP {status}"
+        elif result.meta.get("attempted") or not result.is_error:
+            outcome, detail = "unknown", "no response observed"
+        else:
+            return  # failed before anything was sent
+        entry = {"step": self.steps_used, "agent": self.name, "tool": tool, "fingerprint": self.run.vault.mask(fingerprint),
+                 "origin": origin, "outcome": outcome, "detail": detail, "checked": False}
+        self.run.ledger.append(entry)
+        self.emit("write_recorded", entry)
+
+    def _note_observation(self, name: str, args: dict, result: ToolResult) -> None:
+        """A successful page load or API read somewhere other than where a submission came from counts as having
+        checked the state after an unknown outcome. Re-reading the form or the error page does not."""
+        status = result.meta.get("status")
+        if result.is_error or not isinstance(status, int) or status >= 400:
+            return
+        location = f"GET {args.get('url', '')}" if name == "http_request" else result.meta.get("url")
+        for entry in self.run.ledger:
+            if entry["outcome"] == "unknown" and not entry["checked"] and location and location != entry["origin"]:
+                entry["checked"] = True
 
     @staticmethod
     def _to_block(tool_use_id: str, result: ToolResult) -> dict:

@@ -70,6 +70,10 @@ def _markdown(task: str, r: "TaskResult", rows: list[dict], plan: list[dict]) ->
         out.append("## Final plan\n")
         out += [f"- [{s['status']}] {s['title']}" for s in plan]
         out.append("")
+    if r.ledger:
+        out.append("## State-changing actions (harness ledger)\n")
+        out += [f"- step {e['step']}: `{e['fingerprint'][:200]}` -> **{e['outcome']}** ({e['detail']})" for e in r.ledger]
+        out.append("")
     if r.memory:
         out.append("## Facts recorded\n")
         out += [f"- **{k}** = {v['value']} _(source: {v['source']})_" for k, v in r.memory.items()]
@@ -122,6 +126,14 @@ def _html(task: str, r: "TaskResult", rows: list[dict], plan: list[dict]) -> str
             f"<tr><td>{escape(k)}</td><td>{escape(v['value'])}</td><td class='muted'>{escape(v['source'])}</td></tr>"
             for k, v in r.memory.items()) + "</table>"
 
+    ledger_html = ""
+    if r.ledger:
+        ledger_html = ("<h2>State-changing actions <span class='muted'>(recorded by the harness)</span></h2>"
+                       "<table><tr><th>Step</th><th>Action</th><th>Outcome</th></tr>" + "".join(
+                           f"<tr><td>{e['step']}</td><td><code>{escape(e['fingerprint'][:220])}</code></td>"
+                           f"<td class='{'pass' if e['outcome'] == 'applied' else 'fail'}'>{escape(e['outcome'])} "
+                           f"<span class='muted'>({escape(e['detail'])})</span></td></tr>" for e in r.ledger) + "</table>")
+
     steps = []
     for row in rows:
         shots = "".join(f"<a href='{escape(p)}' target='_blank'><img src='{escape(p)}' loading='lazy'></a>"
@@ -165,7 +177,7 @@ details img {{ max-width:100%; border:1px solid var(--line); border-radius:4px; 
 <div class="muted">{escape(task)}</div>
 <div class="status {tone}">{escape(STATUS_LABEL.get(r.status, r.status))}</div>
 <p>{escape(r.summary).replace(chr(10), '<br>')}</p>
-{result_html}{verify_html}{evidence_html}{plan_html}{memory_html}
+{result_html}{verify_html}{evidence_html}{ledger_html}{plan_html}{memory_html}
 <h2>Step-by-step trace</h2>{''.join(steps)}
 <p class="muted" style="margin-top:20px">{usage}</p>
 </main></body></html>"""

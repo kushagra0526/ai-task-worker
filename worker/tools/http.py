@@ -38,6 +38,12 @@ class HttpRequest(Tool):
     def classify(self, args: dict, ctx: "ToolContext") -> Risk:
         return classify_http(args.get("method", "GET"))
 
+    def fingerprint(self, args: dict, ctx: "ToolContext") -> str:
+        return f"{args['method'].upper()} {args['url']} {json.dumps(args.get('json_body'), sort_keys=True)}"
+
+    def origin(self, args: dict, ctx: "ToolContext") -> str:
+        return f"{args['method'].upper()} {args['url']}"
+
     def describe_action(self, args: dict, ctx: "ToolContext") -> str:
         body = json.dumps(args.get("json_body"), indent=2) if args.get("json_body") else ""
         return f"{args['method']} {args['url']}" + (f"\nBody:\n{body}" if body else "")
@@ -67,6 +73,10 @@ class HttpRequest(Tool):
                 if attempt < attempts - 1:
                     time.sleep(0.5 * (2 ** attempt))
         else:
+            if method != "GET":  # the request may have reached the server: the outcome is unknown, not "failed"
+                return ToolResult(f"{method} {url} got no response ({last_error}). The outcome is unknown - the change "
+                                  "may or may not have been applied. Check the current state before retrying.",
+                                  is_error=True, meta={"attempted": True})
             raise ToolError(f"{method} {url} failed after {attempts} attempt(s): {last_error}")
 
         body = resp.text
@@ -76,8 +86,11 @@ class HttpRequest(Tool):
             pass
         if len(body) > BODY_LIMIT:
             body = body[:BODY_LIMIT] + "\n... [truncated]"
-        return ToolResult(f"HTTP {resp.status_code}\n{body}", is_error=resp.status_code >= 400,
-                          meta={"status": resp.status_code})
+        text = f"HTTP {resp.status_code}\n{body}"
+        if method != "GET" and resp.status_code >= 500:
+            text = (f"WARNING: HTTP {resp.status_code} on a {method}. The outcome is unknown - the change may or may not "
+                    f"have been applied. Check the current state before retrying.\n{text}")
+        return ToolResult(text, is_error=resp.status_code >= 400, meta={"status": resp.status_code})
 
 
 HTTP_TOOLS = [HttpRequest()]

@@ -15,8 +15,8 @@ before deciding the next step. Never assume an action worked - look for the conf
 - Record the facts the task depends on (extracted values, IDs you create, decisions) with `remember`, including \
 where each came from. Older steps may be summarised to save space, so anything you will need later belongs in \
 memory. Do not invent values; if something is missing, find it or say so.
-- Be economical: fill all the fields of a form in one browser_fill call, and use browser_snapshot(find=...) instead \
-of rereading long pages.
+- Be economical: record everything you extract from a source in one remember call, fill all the fields of a form \
+in one browser_fill call, and use browser_snapshot(find=...) instead of rereading long pages.
 - When something fails, figure out why from what you observe. Fix input errors and try again; try a different \
 route (another page, the API) if one is blocked. Before repeating any action that creates, changes or sends \
 something, check whether the first attempt actually took effect - a failure page does not prove nothing happened, \
@@ -57,12 +57,20 @@ def worker_kickoff(task: str, today: str) -> str:
     return f"Today's date: {today}\n\nTask from your colleague:\n{task}"
 
 
-def verifier_kickoff(task: str, claim: str, memory: str, today: str) -> str:
+def format_ledger(ledger: list[dict]) -> str:
+    if not ledger:
+        return "(none)"
+    return "\n".join(f"- step {e['step']}: {e['fingerprint'][:300]} -> {e['outcome']} ({e['detail']})" for e in ledger)
+
+
+def verifier_kickoff(task: str, claim: str, memory: str, today: str, ledger: str = "(none)") -> str:
     return (
         f"Today's date: {today}\n\n"
         f"Original task given to the worker:\n{task}\n\n"
         f"The worker's completion report:\n{claim}\n\n"
         f"Facts the worker recorded during execution:\n{memory}\n\n"
+        "State-changing actions the harness observed the worker perform (recorded by the harness, not reported by "
+        f"the worker):\n{ledger}\n\n"
         "Verify the outcome against the live systems and submit your verdict."
     )
 

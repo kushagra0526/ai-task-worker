@@ -14,6 +14,7 @@ round trip and the model always reasons about the real outcome.
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -273,6 +274,17 @@ class BrowserTab:
         return ToolResult("\n".join(parts), evidence=[rel], meta={"url": self.page.url, "status": self.last_status})
 
 
+def submission_fingerprint(tab: "BrowserTab", info: dict, overrides: dict[str, str], via_form: bool = False) -> str:
+    """What activating a control would send: method + target + field values. Two identical submissions of
+    the same form produce the same fingerprint, whichever element refs were used."""
+    if info.get("hasForm") and (info.get("isSubmit") or via_form):
+        fields = dict(info.get("fields", []))
+        fields.update(overrides)
+        action = tab.resolve_url(info.get("formAction") or tab.page.url)
+        return f"{(info.get('formMethod') or 'get').upper()} {action} {json.dumps(sorted(fields.items()), ensure_ascii=False)}"
+    return f"activate {info.get('label', '')!r} {info.get('href') or ''} on {tab.page.url}"
+
+
 # ---------------------------------------------------------------------- tools
 
 
@@ -340,6 +352,12 @@ class BrowserClick(Tool):
         if not info:
             return Risk.READ  # run() will report the stale ref
         return classify_control(info["label"], info["isSubmit"] and info["hasForm"], info["formMethod"])
+
+    def fingerprint(self, args: dict, ctx: "ToolContext") -> str:
+        return submission_fingerprint(ctx.tab, ctx.tab.control_info(args["ref"]) or {}, {})
+
+    def origin(self, args: dict, ctx: "ToolContext") -> str:
+        return ctx.tab.page.url
 
     def describe_action(self, args: dict, ctx: "ToolContext") -> str:
         info = ctx.tab.control_info(args["ref"]) or {}
@@ -414,12 +432,26 @@ class BrowserFill(Tool):
             return classify_control("", bool(info and info["hasForm"]), info["formMethod"] if info else None)
         return Risk.READ
 
-    def describe_action(self, args: dict, ctx: "ToolContext") -> str:
+    @staticmethod
+    def _planned(args: dict, ctx: "ToolContext") -> dict[str, str]:
+        """Field label -> value this call will set (secrets masked)."""
         planned: dict[str, str] = {}
         for f in args["fields"]:
             loc = ctx.tab.page.locator(f'[data-agent-ref="{f["ref"]}"]')
             label = (loc.first.evaluate(FIELD_KIND_JS)["label"] if loc.count() else "") or f["ref"]
             planned[label] = "********" if "{{secret:" in f["value"] else f["value"]
+        return planned
+
+    def fingerprint(self, args: dict, ctx: "ToolContext") -> str:
+        target = args.get("submit_ref") or (args["fields"][-1]["ref"] if args["fields"] else "")
+        info = ctx.tab.control_info(target) or {}
+        return submission_fingerprint(ctx.tab, info, self._planned(args, ctx), via_form=not args.get("submit_ref"))
+
+    def origin(self, args: dict, ctx: "ToolContext") -> str:
+        return ctx.tab.page.url
+
+    def describe_action(self, args: dict, ctx: "ToolContext") -> str:
+        planned = self._planned(args, ctx)
         info = ctx.tab.control_info(args["submit_ref"]) if args.get("submit_ref") else None
         action = f'Fill the form and click "{info["label"]}"' if info else "Fill the form and press Enter"
         text = f'{action} on "{ctx.tab.page.title()}" ({ctx.tab.page.url})'

@@ -94,7 +94,7 @@ class WriteFile(Tool):
             raise ToolError(f"{args['path']!r} already exists. Pass overwrite=true to replace it.")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(args["content"], encoding="utf-8")
-        return ToolResult(f"Wrote {len(args['content'])} characters to {args['path']}.")
+        return ToolResult(f"Wrote {len(args['content'])} characters to {args['path']}.", meta={"applied": True})
 
 
 FILE_TOOLS = [ListFiles(), ReadFile(), WriteFile()]

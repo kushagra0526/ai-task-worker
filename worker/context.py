@@ -18,6 +18,9 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+# Turns that only update the agent's own bookkeeping; they don't count toward the verbatim window.
+BOOKKEEPING_TOOLS = {"remember", "update_plan"}
+
 TRUNCATION_NOTE = "\n... [truncated to fit the context budget; call browser_snapshot with find='...' to see more]"
 
 
@@ -48,7 +51,30 @@ def group_turns(messages: list[dict]) -> list[list[dict]]:
     return turns
 
 
+def is_bookkeeping(turn: list[dict]) -> bool:
+    assistant = turn[0]
+    if assistant["role"] != "assistant" or not isinstance(assistant["content"], list):
+        return False
+    names = [_field(b, "name") for b in assistant["content"] if _field(b, "type") == "tool_use"]
+    return bool(names) and all(n in BOOKKEEPING_TOOLS for n in names)
+
+
+def window_start(turns: list[list[dict]], observations: int) -> int:
+    """Index of the first verbatim turn: enough recent turns to include `observations` non-bookkeeping turns."""
+    seen, start = 0, len(turns)
+    for i in range(len(turns) - 1, -1, -1):
+        start = i
+        if not is_bookkeeping(turns[i]):
+            seen += 1
+            if seen >= observations:
+                break
+    return start
+
+
 def summarise_result(text: str) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= 320:  # small results (API answers, confirmations) survive whole
+        return compact or "(no output)"
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
         return "(no output)"
@@ -56,7 +82,7 @@ def summarise_result(text: str) -> str:
     for ln in lines[1:]:
         if ln.startswith(("URL:", "[alert]", "WARNING", "HTTP ", "Downloaded")) and ln not in parts:
             parts.append(ln)
-    return _clip(" | ".join(parts), 260)
+    return _clip(" | ".join(parts), 320)
 
 
 def digest_turn(number: int, turn: list[dict]) -> str:
@@ -133,7 +159,7 @@ def build_view(messages: list[dict], budget: int, count: Callable[[str], int], *
     def size(view: list[dict]) -> int:
         return count(json.dumps(view, ensure_ascii=False, default=str))
 
-    keep = min(recent_turns, len(turns))
+    keep = len(turns) - window_start(turns, recent_turns) if turns else 0
     digests = [digest_turn(i + 1, t) for i, t in enumerate(turns[: len(turns) - keep])]
     view = assemble(keep, digests)
     # 1) fewer verbatim turns (always keep the latest), 2) drop the oldest digests, 3) truncate the latest results.

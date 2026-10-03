@@ -364,7 +364,12 @@ async def api_create_bill(request: Request, x_api_key: str | None = Header(None)
     bill, errors = validate_bill(await request.json(), iso_dates=True)
     if errors:
         return JSONResponse({"errors": errors}, status_code=422)
-    return JSONResponse({"bill": commit_bill(bill, "api")}, status_code=201)
+    created = commit_bill(bill, "api")
+    if STATE["chaos"]["flaky_submit"] and "submit" not in STATE["chaos_fired"]:
+        STATE["chaos_fired"].add("submit")  # same fault as the web form: committed, but the caller sees a 502
+        return JSONResponse({"error": "upstream timeout - the request may or may not have been processed"},
+                            status_code=502)
+    return JSONResponse({"bill": created}, status_code=201)
 
 
 # --------------------------------------------------------------------------- test/admin hooks

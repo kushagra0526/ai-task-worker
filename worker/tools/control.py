@@ -49,24 +49,40 @@ class UpdatePlan(Tool):
 
 class Remember(Tool):
     name = "remember"
-    description = ("Record a fact you discovered that matters for the task (an extracted value, an ID you created, a "
-                   "decision), with where it came from. Recorded facts are shown to the verifier and in the final report.")
+    description = ("Record facts that matter for the task (extracted values, IDs you looked up or created, decisions), "
+                   "each with where it came from. Record everything you extracted from a source in one call. Working "
+                   "memory stays visible to you for the whole task, and is shown to the verifier and in the report.")
     input_schema = {
         "type": "object",
         "properties": {
-            "key": {"type": "string", "description": "Short snake_case name, e.g. invoice_amount"},
-            "value": {"type": "string"},
-            "source": {"type": "string", "description": "Where this came from, e.g. 'ACME-2026-0917.pdf, Total due line'"},
+            "facts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string", "description": "Short snake_case name, e.g. invoice_amount"},
+                        "value": {"type": "string"},
+                        "source": {"type": "string", "description": "e.g. 'ACME-2026-0917.pdf, Total due line'"},
+                    },
+                    "required": ["key", "value", "source"],
+                },
+            },
         },
-        "required": ["key", "value", "source"],
+        "required": ["facts"],
         "additionalProperties": False,
     }
 
     def run(self, args: dict, ctx: "ToolContext") -> ToolResult:
-        previous = ctx.run.memory.get(args["key"])
-        ctx.run.memory[args["key"]] = {"value": args["value"], "source": args["source"], "step": ctx.step}
-        ctx.emit("memory_updated", {"key": args["key"], "value": args["value"], "source": args["source"],
-                                    "previous": previous["value"] if previous else None})
+        if not args["facts"]:
+            raise ToolError("No facts given.")
+        for fact in args["facts"]:
+            if not all(isinstance(fact.get(k), str) and fact.get(k) for k in ("key", "value", "source")):
+                raise ToolError(f"Each fact needs non-empty string key, value and source; got {fact!r}.")
+        for fact in args["facts"]:
+            previous = ctx.run.memory.get(fact["key"])
+            ctx.run.memory[fact["key"]] = {"value": fact["value"], "source": fact["source"], "step": ctx.step}
+            ctx.emit("memory_updated", {"key": fact["key"], "value": fact["value"], "source": fact["source"],
+                                        "previous": previous["value"] if previous else None})
         return ToolResult(f"Remembered. Working memory now:\n{format_memory(ctx.run.memory)}")
 
 

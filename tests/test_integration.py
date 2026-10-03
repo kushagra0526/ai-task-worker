@@ -56,8 +56,9 @@ def test_invoice_to_erp_with_validation_error_and_ambiguous_502(env, budget):
         lambda m: expect(last_tool_text(m), "downloads/ACME-2026-0917.pdf") and
                   [("read_file", {"path": "downloads/ACME-2026-0917.pdf"})],
         lambda m: expect(last_tool_text(m), "Total due USD 4,812.50", "Payment due: 2026-10-30") and [
-            ("remember", {"key": "invoice_amount", "value": "USD 4812.50", "source": "ACME-2026-0917.pdf"}),
-            ("remember", {"key": "due_date", "value": "2026-10-30", "source": "ACME-2026-0917.pdf"}),
+            ("remember", {"facts": [
+                {"key": "invoice_amount", "value": "USD 4812.50", "source": "ACME-2026-0917.pdf"},
+                {"key": "due_date", "value": "2026-10-30", "source": "ACME-2026-0917.pdf"}]}),
             ("read_file", {"path": "vendor_categories.csv"})],
         lambda m: [("browser_navigate", {"url": f"{BASE}/erp/bills/new"})],
         lambda m: [("browser_fill", {"fields": [
@@ -72,7 +73,7 @@ def test_invoice_to_erp_with_validation_error_and_ambiguous_502(env, budget):
                   [("browser_navigate", {"url": f"{BASE}/erp/bills?q=ACME-2026-0917"})],
         lambda m: [("browser_click", {"ref": find_ref(last_tool_text(m), r'link "AP-1043"')})],
         lambda m: expect(last_tool_text(m), "Invoice number: ACME-2026-0917", "USD 4,812.50", "30/10/2026") and [
-            ("remember", {"key": "bill_id", "value": "AP-1043", "source": "ERP bill page"}),
+            ("remember", {"facts": [{"key": "bill_id", "value": "AP-1043", "source": "ERP bill page"}]}),
             ("finish", {"status": "success", "summary": "Entered Acme invoice ACME-2026-0917 as bill AP-1043.",
                         "result": {"amount": "USD 4812.50", "due_date": "2026-10-30", "bill_id": "AP-1043"},
                         "evidence": [{"claim": "Bill AP-1043 exists", "source": f"{BASE}/erp/bills/AP-1043"}],

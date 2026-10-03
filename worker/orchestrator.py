@@ -34,6 +34,7 @@ class TaskResult:
     finish: dict | None = None
     verification: list[dict] = field(default_factory=list)
     memory: dict = field(default_factory=dict)
+    ledger: list[dict] = field(default_factory=list)
     usage: dict = field(default_factory=dict)
     report_path: Path | None = None
 
@@ -113,7 +114,7 @@ def run_task(
         run.close()
 
     result = TaskResult(status=status, summary=summary, run_dir=run_dir, finish=finish, verification=verifications,
-                        memory=run.memory, usage=dict(run.usage))
+                        memory=run.memory, ledger=run.ledger, usage=dict(run.usage))
     bus.emit("run_finished", {"status": status, "summary": summary, "usage": run.usage,
                               "result": (finish or {}).get("result")})
     result.report_path = write_reports(run_dir, task, result, bus.events, run.plan)
@@ -150,7 +151,8 @@ def _verify(task: str, finish: dict, run: RunState, llm: LLM, environment: str, 
         max_steps=settings.verifier_max_steps, terminal="submit_verdict",
     )
     outcome = verifier.run_until_terminal(
-        prompts.verifier_kickoff(task, format_finish(finish), format_memory(run.memory), today))
+        prompts.verifier_kickoff(task, format_finish(finish), format_memory(run.memory), today,
+                                 prompts.format_ledger(run.ledger)))
     verdict = outcome.terminal_args or {
         "verdict": "inconclusive", "checks": [],
         "summary": f"Verifier did not reach a verdict ({outcome.reason}: {outcome.detail})",
