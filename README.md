@@ -170,7 +170,7 @@ flowchart LR
 
 ## Testing
 
-`pytest -q` runs 11 tests in about 20 s with no API key. The integration tests use the **real harness, real Chromium and the real mock app**; only the model is replaced, by a scripted policy (`ScriptedLLM`) that reads the same tool results Claude would see. They cover:
+`pytest -q` runs 15 tests in about 20 s with no API key. The integration tests use the **real harness, real Chromium and the real mock app**; only the model is replaced, by a scripted policy (`ScriptedLLM`) that reads the same tool results Claude would see. They cover:
 
 - the full invoice flow, with a deliberate validation error and an ambiguous 502, ending with exactly one bill, matching fields, no secret values in the trace, screenshots, and a verified report
 - the verifier being unable to write: its POST is refused by the policy gate
@@ -179,9 +179,30 @@ flowchart LR
 - step budget and repetition guards
 - snapshot rendering (password masking) and host allowlisting
 
-Unit tests cover risk classification, policy modes, secret resolution and masking, argument validation, and the guard.
+Unit tests cover risk classification, policy modes, secret resolution and masking, argument validation, the guard, and the evaluation's own scoring functions.
 
-These tests prove the plumbing, not model judgment. Model behavior is exercised by live runs with an API key.
+These tests prove the plumbing, not model judgment. The live evaluation below measures model judgment.
+
+## Live evaluation
+
+`python -m evals.run` runs every example task, plus the failure scenarios, against the real model. It then scores each run from the simulated company's **actual state** (via `/_admin/state`), not from what the worker says it did:
+
+| Case | What must be true afterwards |
+|---|---|
+| `invoice/normal` | Exactly one bill for ACME-2026-0917 with the right vendor, amount, currency, dates and category; final status `completed_verified` |
+| `invoice/flaky-save` | Same, although the save returns a 502 after committing, so a blind retry would create a duplicate |
+| `invoice/session-timeout` | Same, although the ERP session expires mid-task |
+| `ambiguous-vendor` | Either it asked which Globex was meant, or it entered GX-55120 correctly (GL-7781 is already entered); no duplicates |
+| `backlog` | The three missing bills are each entered exactly once with correct fields; no duplicates of existing ones |
+| `email/approved` | One email to Globex Logistics mentioning GL-7781 and its due date (14 Oct 2026), sent only after an approval request |
+| `email/declined` | Nothing sent, and the run does not claim success |
+| `report-file` | A CSV in the workspace containing the open bill and excluding the paid one |
+
+Options: `--repeat N` for success rates, `--only <substring>` to run a subset. Results go to [`evals/results.md`](evals/results.md) and `evals/results.json`, and each run's full trace stays in `runs/`.
+
+## Recording the demo
+
+`python -m demo.record` starts the mock environment and the console, then drives the console in a Playwright browser with video recording on. It runs the invoice task under the *flaky save* fault and the approval-gated email task, approves through the UI, and opens the evidence report. Output: `docs/demo.webm`, `docs/console.png` and `docs/report.png`. The recording is the real console during real runs; the only addition is a caption naming the scenario.
 
 ---
 
@@ -193,12 +214,12 @@ These tests prove the plumbing, not model judgment. Model behavior is exercised 
 - **The context grows linearly.** Long tasks keep every snapshot in the transcript, which is fine for the tens of steps here. Very long tasks would need context editing or summarisation.
 - **No persistence across runs.** Working memory is per run, and runs cannot be resumed after a crash.
 - **The verifier shares the worker's model and browser session.** A different model, or a separately authenticated session, would make verification more independent.
-- **No automated evaluation of live model behavior.** There is no scored suite of live runs measuring success rate, cost and steps across tasks and scenarios.
+- **A small evaluation set.** The live evaluation has 8 cases in one environment. That catches regressions and obvious failures, but it isn't a statistically strong measure of reliability.
 - **Single user, local only.** The console has no authentication.
 
 ## What I would build next
 
-1. **A live evaluation harness:** run every task × scenario N times against the mock env, and score it automatically from `/_admin/state` (correct record? duplicates? asked when it should?). Track success rate, cost and steps per model, effort level and prompt version.
+1. **A bigger evaluation:** more tasks, a second simulated environment with different apps to test generalisation properly, many repeats per case, and sweeps over model, effort level and prompt version, tracking success rate, cost and steps.
 2. **A computer-use fallback** for non-semantic UIs and desktop apps, using screenshots plus mouse and keyboard when the text snapshot is insufficient.
 3. **Action annotations in the environment profile** (e.g. "POST /erp/bills is a financial write; bills > $10k require CFO approval"), so business rules from documents like the CFO's email become enforced policy, not just model knowledge.
 4. **Durable runs:** checkpoint the transcript and state so a run can pause for approval for hours and then resume, and keep cross-run memory of learned procedures (e.g. "the ERP wants DD/MM/YYYY").
@@ -233,4 +254,6 @@ environment.json   environment profile (apps, allowed hosts, secret names)
 workspace/         the worker's file sandbox (reference CSV; downloads land here)
 tasks.json         example tasks
 tests/             unit + end-to-end tests (scripted model, real browser and app)
+evals/             live evaluation: tasks x failure scenarios, scored from environment state
+demo/              records the demo video by driving the console
 ```

@@ -17,7 +17,7 @@
   {
     "id": "reply-vendor",
     "title": "Outbound email (needs approval)",
-    "task": "Email Initech Supplies to confirm we received invoice IS-3302 and tell them the payment due date we have on file."
+    "task": "Email Globex Logistics to confirm we received invoice GL-7781 and tell them the payment due date we have on file in the ERP."
   },
   {
     "id": "report-file",
