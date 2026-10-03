@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block accent %}#5b3cc4{% endblock %}
+{% block header %}
+<header>
+  <span class="brand">Northwind ERP &middot; Accounts Payable</span>
+  {% if user %}
+  <nav><a href="/erp">Dashboard</a><a href="/erp/bills">Bills</a><a href="/erp/bills/new">New bill</a><a href="/erp/vendors">Vendors</a></nav>
+  <span class="user">Signed in as {{ user }}</span>
+  <form method="post" action="/erp/logout" style="margin:0"><button type="submit" style="padding:4px 10px">Sign out</button></form>
+  {% endif %}
+</header>
+{% endblock %}

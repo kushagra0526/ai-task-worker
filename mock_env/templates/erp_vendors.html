@@ -1,0 +1,9 @@
+{% extends "erp_base.html" %}
+{% block title %}Vendors - Northwind ERP{% endblock %}
+{% block content %}
+<h1>Vendors</h1>
+<table>
+  <thead><tr><th>ID</th><th>Name</th><th>Billing email</th></tr></thead>
+  <tbody>{% for v in vendors %}<tr><td>{{ v.id }}</td><td>{{ v.name }}</td><td>{{ v.email }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

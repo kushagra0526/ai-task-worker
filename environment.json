@@ -1,0 +1,29 @@
+{
+  "name": "Northwind Traders (simulated company)",
+  "allowed_hosts": ["127.0.0.1:8700", "localhost:8700"],
+  "applications": [
+    {
+      "name": "Northwind Mail",
+      "url": "http://127.0.0.1:8700/mail",
+      "description": "Shared accounts-payable inbox (already signed in). Vendor invoices arrive here, usually as PDF attachments. Supports search and composing/sending email."
+    },
+    {
+      "name": "Northwind ERP",
+      "url": "http://127.0.0.1:8700/erp",
+      "description": "Internal accounts-payable system: bills and vendors. Sign in as user 'agent.worker' with password {{secret:erp_password}}."
+    },
+    {
+      "name": "Northwind ERP API",
+      "url": "http://127.0.0.1:8700/erp/api",
+      "description": "JSON API for the same ERP. Send header X-API-Key: {{secret:erp_api_key}}. GET /vendors?q=, GET /bills?invoice_number=&vendor_id=, POST /bills with {vendor_id, invoice_number, invoice_date, due_date (ISO YYYY-MM-DD), currency, amount, category, notes}."
+    }
+  ],
+  "secrets": {
+    "erp_password": "ERP password",
+    "erp_api_key": "ERP API key"
+  },
+  "notes": [
+    "A shared workspace folder holds reference files for the AP team; downloaded files are saved there under downloads/.",
+    "Company currency is USD; vendors may invoice in EUR or GBP - record bills in the invoice currency."
+  ]
+}

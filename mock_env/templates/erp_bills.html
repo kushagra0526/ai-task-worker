@@ -1,0 +1,19 @@
+{% extends "erp_base.html" %}
+{% block title %}Bills - Northwind ERP{% endblock %}
+{% block content %}
+<h1>Bills</h1>
+<form method="get" action="/erp/bills" style="display:flex;gap:8px;max-width:480px;margin-bottom:16px">
+  <input type="search" name="q" value="{{ q }}" aria-label="Search bills" placeholder="Invoice #, vendor or bill id">
+  <button type="submit">Search</button>
+</form>
+<table>
+  <thead><tr><th>Bill</th><th>Vendor</th><th>Invoice #</th><th>Invoice date</th><th>Due date</th><th>Amount</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for b in bills %}
+  <tr><td><a href="/erp/bills/{{ b.id }}">{{ b.id }}</a></td><td>{{ b.vendor_name }}</td><td>{{ b.invoice_number }}</td><td>{{ b.invoice_date_display }}</td><td>{{ b.due_date_display }}</td><td>{{ b.currency }} {{ b.amount_display }}</td><td>{{ b.status }}</td></tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">No bills match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

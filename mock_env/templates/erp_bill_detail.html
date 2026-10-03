@@ -1,0 +1,18 @@
+{% extends "erp_base.html" %}
+{% block title %}{{ bill.id }} - Northwind ERP{% endblock %}
+{% block content %}
+{% if created %}<div class="banner ok" role="status">Bill {{ bill.id }} was created.</div>{% endif %}
+<h1>Bill {{ bill.id }}</h1>
+<dl class="kv">
+  <dt>Vendor</dt><dd>{{ bill.vendor_name }} ({{ bill.vendor_id }})</dd>
+  <dt>Invoice number</dt><dd>{{ bill.invoice_number }}</dd>
+  <dt>Invoice date</dt><dd>{{ bill.invoice_date_display }}</dd>
+  <dt>Due date</dt><dd>{{ bill.due_date_display }}</dd>
+  <dt>Amount</dt><dd>{{ bill.currency }} {{ bill.amount_display }}</dd>
+  <dt>Category</dt><dd>{{ bill.category }}</dd>
+  <dt>Status</dt><dd>{{ bill.status }}</dd>
+  <dt>Notes</dt><dd>{{ bill.notes or '-' }}</dd>
+  <dt>Entered by</dt><dd>{{ bill.created_by }}</dd>
+</dl>
+<p><a href="/erp/bills">&larr; All bills</a></p>
+{% endblock %}

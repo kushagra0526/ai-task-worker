@@ -1,0 +1,23 @@
+{% extends "mail_base.html" %}
+{% block title %}Inbox - Northwind Mail{% endblock %}
+{% block content %}
+<h1>Inbox</h1>
+<form method="get" action="/mail" style="display:flex;gap:8px;max-width:480px;margin-bottom:16px">
+  <input type="search" name="q" value="{{ q }}" aria-label="Search mail" placeholder="Search mail">
+  <button type="submit">Search</button>
+</form>
+{% if q %}<p class="muted">{{ emails|length }} result(s) for "{{ q }}" &middot; <a href="/mail">clear</a></p>{% endif %}
+<table>
+  <thead><tr><th>From</th><th>Subject</th><th>Received</th><th>Attachment</th></tr></thead>
+  <tbody>
+  {% for e in emails %}
+    <tr>
+      <td>{{ e.from_name }} <span class="muted">&lt;{{ e.from_addr }}&gt;</span></td>
+      <td><a href="/mail/m/{{ e.id }}">{{ e.subject }}</a></td>
+      <td>{{ e.date }}</td>
+      <td>{% if e.attachments %}PDF{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

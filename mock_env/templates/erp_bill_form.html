@@ -1,0 +1,28 @@
+{% extends "erp_base.html" %}
+{% block title %}New bill - Northwind ERP{% endblock %}
+{% block content %}
+<h1>New bill</h1>
+{% if errors %}
+<div class="banner err" role="alert"><strong>The bill was not saved:</strong><ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
+{% endif %}
+<form class="grid" method="post" action="/erp/bills">
+  <label for="vendor_id">Vendor</label>
+  <select id="vendor_id" name="vendor_id">
+    <option value="">-- select vendor --</option>
+    {% for v in vendors %}<option value="{{ v.id }}" {% if values.vendor_id == v.id %}selected{% endif %}>{{ v.name }}</option>{% endfor %}
+  </select>
+  <label for="invoice_number">Invoice number</label><input id="invoice_number" name="invoice_number" value="{{ values.invoice_number or '' }}">
+  <label for="invoice_date">Invoice date</label><input id="invoice_date" name="invoice_date" placeholder="dd/mm/yyyy" value="{{ values.invoice_date or '' }}">
+  <label for="due_date">Due date</label><input id="due_date" name="due_date" placeholder="dd/mm/yyyy" value="{{ values.due_date or '' }}">
+  <label for="currency">Currency</label>
+  <select id="currency" name="currency">{% for c in ["USD", "EUR", "GBP"] %}<option {% if values.currency == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+  <label for="amount">Amount</label><input id="amount" name="amount" inputmode="decimal" value="{{ values.amount or '' }}">
+  <label for="category">Category</label>
+  <select id="category" name="category">
+    <option value="">-- select category --</option>
+    {% for c in categories %}<option {% if values.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+  </select>
+  <label for="notes">Notes</label><textarea id="notes" name="notes" rows="3">{{ values.notes or '' }}</textarea>
+  <span></span><div><button type="submit">Save bill</button></div>
+</form>
+{% endblock %}

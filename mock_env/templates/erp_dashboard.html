@@ -1,0 +1,11 @@
+{% extends "erp_base.html" %}
+{% block title %}Dashboard - Northwind ERP{% endblock %}
+{% block content %}
+<h1>Accounts payable</h1>
+<p>{{ bill_count }} bills on file, {{ open_count }} open. <a href="/erp/bills/new">Enter a new bill</a></p>
+<h2 style="font-size:16px">Recently entered</h2>
+<table>
+  <thead><tr><th>Bill</th><th>Vendor</th><th>Invoice #</th><th>Amount</th><th>Due</th><th>Status</th></tr></thead>
+  <tbody>{% for b in recent %}<tr><td><a href="/erp/bills/{{ b.id }}">{{ b.id }}</a></td><td>{{ b.vendor_name }}</td><td>{{ b.invoice_number }}</td><td>{{ b.currency }} {{ b.amount_display }}</td><td>{{ b.due_date_display }}</td><td>{{ b.status }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

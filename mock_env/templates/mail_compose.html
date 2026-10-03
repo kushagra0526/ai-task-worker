@@ -1,0 +1,12 @@
+{% extends "mail_base.html" %}
+{% block title %}Compose - Northwind Mail{% endblock %}
+{% block content %}
+<h1>New message</h1>
+{% if error %}<div class="banner err" role="alert">{{ error }}</div>{% endif %}
+<form class="grid" method="post" action="/mail/send">
+  <label for="to">To</label><input id="to" name="to" value="{{ to }}">
+  <label for="subject">Subject</label><input id="subject" name="subject" value="{{ subject }}">
+  <label for="body">Message</label><textarea id="body" name="body" rows="10">{{ body }}</textarea>
+  <span></span><div><button type="submit">Send</button></div>
+</form>
+{% endblock %}

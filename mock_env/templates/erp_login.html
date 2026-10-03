@@ -1,0 +1,13 @@
+{% extends "erp_base.html" %}
+{% block title %}Sign in - Northwind ERP{% endblock %}
+{% block content %}
+<h1>Sign in</h1>
+{% if expired %}<div class="banner warn" role="alert">Your session has expired. Please sign in again.</div>{% endif %}
+{% if error %}<div class="banner err" role="alert">{{ error }}</div>{% endif %}
+<form class="grid" method="post" action="/erp/login">
+  <input type="hidden" name="next" value="{{ next }}">
+  <label for="username">Username</label><input id="username" name="username" autocomplete="username">
+  <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">
+  <span></span><div><button type="submit">Sign in</button></div>
+</form>
+{% endblock %}

@@ -1,0 +1,27 @@
+[
+  {
+    "id": "invoice-to-erp",
+    "title": "Invoice -> ERP (the brief's example)",
+    "task": "Find the latest invoice from Acme Cloud, extract the amount and due date, enter it into our internal system, and tell me once it is done."
+  },
+  {
+    "id": "ambiguous-vendor",
+    "title": "Ambiguous vendor name",
+    "task": "Enter the Globex invoice into the ERP."
+  },
+  {
+    "id": "backlog",
+    "title": "Clear the AP backlog",
+    "task": "Make sure every vendor invoice in the AP inbox has a bill in the ERP. Enter any that are missing and give me a list of what you added."
+  },
+  {
+    "id": "reply-vendor",
+    "title": "Outbound email (needs approval)",
+    "task": "Email Initech Supplies to confirm we received invoice IS-3302 and tell them the payment due date we have on file."
+  },
+  {
+    "id": "report-file",
+    "title": "Produce a file",
+    "task": "Create a CSV in the workspace listing all open bills in the ERP with vendor, invoice number, amount, currency and due date, sorted by due date."
+  }
+]

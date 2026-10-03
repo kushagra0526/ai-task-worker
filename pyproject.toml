@@ -1,0 +1,24 @@
+[project]
+name = "ai-task-worker"
+version = "0.1.0"
+description = "Autonomous AI worker that completes business tasks by operating web apps, files and APIs"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=1.11",
+    "playwright>=1.50",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+    "pypdf>=4.0",
+    "fpdf2>=2.7",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

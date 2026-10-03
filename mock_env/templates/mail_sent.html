@@ -1,0 +1,11 @@
+{% extends "mail_base.html" %}
+{% block title %}Sent - Northwind Mail{% endblock %}
+{% block content %}
+<h1>Sent</h1>
+{% if ok %}<div class="banner ok" role="status">Message sent.</div>{% endif %}
+{% if not sent %}<p class="muted">No sent messages.</p>{% endif %}
+<table>
+  <thead><tr><th>To</th><th>Subject</th><th>Message</th></tr></thead>
+  <tbody>{% for s in sent %}<tr><td>{{ s.to }}</td><td>{{ s.subject }}</td><td>{{ s.body[:120] }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

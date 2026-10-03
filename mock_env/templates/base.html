@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}Northwind{% endblock %}</title>
+<style>
+  :root { --accent: {% block accent %}#1f6feb{% endblock %}; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; color: #1d2330; background: #f5f6f8; }
+  header { background: var(--accent); color: #fff; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
+  header .brand { font-weight: 700; font-size: 16px; }
+  header nav a { color: #fff; margin-right: 16px; text-decoration: none; opacity: .9; }
+  header nav a:hover { opacity: 1; text-decoration: underline; }
+  header .user { margin-left: auto; font-size: 13px; opacity: .85; }
+  main { max-width: 1000px; margin: 24px auto; background: #fff; padding: 24px 28px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h1 { font-size: 22px; margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e3e6eb; }
+  th { background: #f0f2f5; font-weight: 600; }
+  a { color: var(--accent); }
+  .banner { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; }
+  .banner.ok { background: #e6f6ea; border: 1px solid #9bd3a8; }
+  .banner.err { background: #fdecec; border: 1px solid #f0a8a8; }
+  .banner.warn { background: #fff6e0; border: 1px solid #f0d28a; }
+  form.grid { display: grid; grid-template-columns: 160px 1fr; gap: 12px 16px; max-width: 620px; }
+  form.grid label { padding-top: 6px; font-weight: 600; }
+  input, select, textarea { font: inherit; padding: 6px 8px; border: 1px solid #c4c9d2; border-radius: 4px; width: 100%; }
+  button { font: inherit; background: var(--accent); color: #fff; border: 0; padding: 8px 18px; border-radius: 5px; cursor: pointer; }
+  .muted { color: #6b7385; }
+  pre.body { white-space: pre-wrap; font: inherit; background: #fafbfc; padding: 14px; border: 1px solid #e3e6eb; border-radius: 6px; }
+  dl.kv { display: grid; grid-template-columns: 170px 1fr; gap: 6px 12px; }
+  dl.kv dt { font-weight: 600; }
+</style>
+</head>
+<body>
+{% block header %}{% endblock %}
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

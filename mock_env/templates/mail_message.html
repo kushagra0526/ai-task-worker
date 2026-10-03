@@ -1,0 +1,17 @@
+{% extends "mail_base.html" %}
+{% block title %}{{ email.subject }} - Northwind Mail{% endblock %}
+{% block content %}
+<p><a href="/mail">&larr; Back to inbox</a></p>
+<h1>{{ email.subject }}</h1>
+<dl class="kv">
+  <dt>From</dt><dd>{{ email.from_name }} &lt;{{ email.from_addr }}&gt;</dd>
+  <dt>To</dt><dd>ap-team@northwind.example</dd>
+  <dt>Received</dt><dd>{{ email.date }}</dd>
+</dl>
+<pre class="body">{{ email.body }}</pre>
+{% if email.attachments %}
+<h2 style="font-size:16px">Attachments</h2>
+<ul>{% for a in email.attachments %}<li><a href="/mail/attachments/{{ a }}.pdf">{{ a }}.pdf</a></li>{% endfor %}</ul>
+{% endif %}
+<p><a href="/mail/compose?to={{ email.from_addr|urlencode }}&amp;subject={{ ('Re: ' ~ email.subject)|urlencode }}">Reply</a></p>
+{% endblock %}
