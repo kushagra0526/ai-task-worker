@@ -190,6 +190,14 @@ Real runs against the simulated company on Groq's free tier (`gpt-oss-120b` work
 | Run | Outcome | Worker / verifier steps | Wall time (rate-limit waiting) | Tokens in / out | Largest request |
 |---|---|---|---|---|---|
 | Invoice → ERP, normal (before batching) | `completed_verified`, 4/4 checks | 22 / 7 | 8.9 min (8.3 min) | 87.6k / 7.0k | 3,803 (cap 8,000) |
+| Invoice → ERP, **flaky save** (demo video) | `completed_verified`, 7/7 checks | 14 / 5 | 4.6 min (4.1 min) | 61.4k / 5.0k | 4,400 (cap 8,000) |
+
+In the flaky-save run, the harness ledger records two write attempts:
+
+1. **`rejected` (HTTP 422):** the worker guessed a category, and the ERP's error listed the valid ones.
+2. **`unknown` (HTTP 502):** the injected fault. The bill was committed, but the response was an error.
+
+The worker heeded the "outcome unknown" warning and checked with a GET instead of resubmitting. It found bill AP-1043 and did not create a duplicate. The verifier, running on a different model, confirmed amount, dates, vendor, that this is the latest invoice, and that only one bill exists.
 
 In the first run the worker picked the newest Acme invoice (not the older, already-entered one, the reminder or the marketing email). It read the PDF, looked up the vendor ID through the API, created bill AP-1043 with exactly the right fields, and confirmed it with a GET. The verifier re-read the PDF, queried the ERP, and checked on its own that no newer Acme invoice exists.
 
