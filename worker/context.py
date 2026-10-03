@@ -18,6 +18,10 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+# Results up to this size are kept whole in digests (an API answer, a one-page invoice); larger ones
+# (page snapshots) are reduced to their first line, URL and alerts.
+SMALL_RESULT_CHARS = 900
+
 # Turns that only update the agent's own bookkeeping; they don't count toward the verbatim window.
 BOOKKEEPING_TOOLS = {"remember", "update_plan"}
 
@@ -73,7 +77,7 @@ def window_start(turns: list[list[dict]], observations: int) -> int:
 
 def summarise_result(text: str) -> str:
     compact = " ".join(text.split())
-    if len(compact) <= 320:  # small results (API answers, confirmations) survive whole
+    if len(compact) <= SMALL_RESULT_CHARS:  # API answers, short documents and confirmations survive whole
         return compact or "(no output)"
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:

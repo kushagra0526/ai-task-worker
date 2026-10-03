@@ -1,78 +1,74 @@
 # AI Task Worker
 
-An autonomous worker that takes a plain-language business task, such as *"Find the latest invoice from Acme Cloud, extract the amount and due date, enter it into our internal system, and tell me once it is done"*, and completes it by using a real browser, files and APIs against a simulated company. It plans, acts, watches what happens, recovers from failures, asks a human when it should, and has its result checked by an independent verifier. It then reports back with evidence.
+An autonomous worker that takes a plain-language business task, such as *"Find the latest invoice from Acme Cloud, extract the amount and due date, enter it into our internal system, and tell me once it is done"*, and completes it end to end. It uses a real browser, files and APIs against a simulated company. It plans, acts, observes, recovers from failures, asks a human when it should, and has an independent verifier check the result before it reports back with evidence.
 
-The scope is deliberately narrow and the work is real. The company is simulated, but the worker drives an actual Chromium browser against an actual web app, downloads and parses actual PDFs, signs in with a session that can expire, and hits real validation errors and real (injected) server failures. Nothing on the worker's side is mocked except, in the automated tests, the model.
+The scope is narrow and the work is real. The company is simulated, but the worker drives an actual Chromium browser against an actual web app. It downloads and parses actual PDFs, signs in with a session that can expire, and runs into real validation errors and real (injected) server failures. The worker side mocks nothing; only the automated tests replace the model.
+
+It runs on **Claude** (Anthropic API) or on **Groq's free tier** (`gpt-oss-120b`). The Groq path is the harder engineering problem: no prompt caching, and a cap of **8,000 tokens per minute** that every request, including the full prompt and tool list, must fit under. That constraint shaped the parts of the design that matter most: a token-budgeted context, rate pacing from server headers, and economical actions.
 
 ---
 
 ## Quick start
 
-Requirements: Python 3.10+ and an Anthropic API key.
+Requirements: Python 3.10+ and either a Groq API key (free, https://console.groq.com/keys) or an Anthropic API key.
 
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 python -m playwright install chromium
-cp .env.example .env          # then set ANTHROPIC_API_KEY in .env
-```
-
-Start the simulated company (terminal 1):
-
-```bash
-python -m mock_env            # http://127.0.0.1:8700  (intranet, mail, ERP, API)
-```
-
-Then use either interface (terminal 2):
-
-```bash
-python -m worker console      # web console at http://127.0.0.1:8800 (recommended for demos)
+cp .env.example .env    # set WORKER_PROVIDER=groq + GROQ_API_KEY, or ANTHROPIC_API_KEY
 ```
 
 ```bash
-python -m worker run --task-id invoice-to-erp --headed      # CLI, with a visible browser
+python -m mock_env            # terminal 1: the simulated company at http://127.0.0.1:8700
+```
+
+```bash
+python -m worker console      # terminal 2: web console at http://127.0.0.1:8800
+```
+
+Or use the CLI:
+
+```bash
+python -m worker run --task-id invoice-to-erp --headed
 python -m worker run "Enter the Globex invoice into the ERP."
-python -m worker tasks                                       # list the example tasks
+python -m worker tasks
 ```
 
-In the console you pick an **approval mode** and an **environment scenario** (normal, *flaky save*: the ERP commits the bill but returns a 502, or *session expires mid-task*). You then watch the plan, the actions, live screenshots, working memory and the verification verdict. Questions and approval requests appear as dialogs. Every run writes `runs/<timestamp>-<task>/` containing `events.jsonl`, screenshots, and `report.html` / `report.md`.
+In the console you choose an **approval mode** and an **environment scenario**:
 
-Run the tests (no API key needed):
+- **Normal**
+- **Flaky save:** the ERP commits the bill, but the caller gets a 502.
+- **Session expires** mid-task.
 
-```bash
-pytest -q
-```
+You then watch the plan, each action with its risk class and ledger outcome, live screenshots, working memory, context size, rate-limit pacing, and the verifier's verdict. Questions and approval requests appear as dialogs. Every run writes `runs/<timestamp>-<task>/` containing `events.jsonl` (a complete replay), screenshots, and `report.html` / `report.md`.
 
-### Demo
+Tests need no API key: `pytest -q`.
 
-> **Demo video:** _add link here_
+## Demo
 
-A suggested 3-minute walkthrough using the console:
+> **Demo video:** [`docs/demo.mp4`](docs/demo.mp4) is a screen recording of the console during real runs on Groq, shown at 3× speed. Free-tier rate limits pace the agent at roughly 20 seconds per step.
 
-1. **The brief's example, with failures switched on.** Click *Invoice -> ERP*, set the scenario to *Flaky save*, and press Run. The worker should pick the newest Acme invoice over the older one, the reminder and the marketing email. It downloads and reads the PDF, looks up the category in the workspace CSV, and signs in with a secret reference. If it types the amount with a separator, the ERP rejects it and it corrects the field. When the save returns a 502, the right move is to check the bill list rather than resubmit. Finally the verifier re-checks the record through the API. Open the evidence report at the end.
-2. **Session expiry.** Run the same task with *Session expires mid-task*; it signs in again and carries on.
-3. **Ambiguity.** *Ambiguous vendor name* ("the Globex invoice") involves two Globex vendors, so the worker either resolves it from evidence or asks you.
-4. **Human in the loop.** *Outbound email*: the worker drafts the email, and the Send click stops for your approval with the exact contents shown. Decline it and see it stop as `blocked`.
-5. **Different task, same code.** *Clear the AP backlog* or *Produce a file*.
+![Console after the invoice task](docs/console.png)
 
 ---
 
 ## What it does, mapped to the brief
 
-| Capability asked for | How it's implemented |
+| Capability | How it's implemented |
 |---|---|
-| Understand the end goal | The worker prompt asks it to define "done" before acting. The task is free text, and the worker is never given steps. |
-| Break the request into actions | `update_plan` keeps an explicit, revisable plan, shown live in the console and kept in the report. |
-| Use tools | A Playwright browser, sandboxed workspace files (PDF to text), an HTTP/JSON client, plus `remember`, `ask_user` and `finish`. |
-| Observe each result | Every browser action returns the new page state in the same call. HTTP status, downloads and errors are surfaced explicitly. |
-| Decide next step from what happened | A model-driven loop: Claude chooses each next action from the observed state. |
-| Remember discovered information | `remember(key, value, source)` builds working memory with provenance. The verifier and the report receive it. |
-| Detect failure | Tool errors, HTTP 4xx/5xx, validation banners, stale element refs and blocked actions are all reported back to the model as observations. |
-| Retry / alternative | The harness auto-retries only idempotent operations (navigation, GET). For everything else the model must check state first. The ERP's UI and its API offer alternate routes. |
-| Verify the outcome | The worker self-checks, then an **independent verifier agent** with a fresh context and read-only permissions re-checks the claims against live systems. A failed verdict sends the worker into a repair round. |
-| Ask for clarification / approval | `ask_user` handles ambiguity. A **policy gate** requires human approval for irreversible or outbound actions, whatever the model wants. |
-| Summary + evidence | `finish` returns a summary, result values, and claims with sources. The HTML report adds the verification checks, plan, memory, the full action trace and screenshots. |
+| Understand the end goal | The task is free text, and the worker is never given steps. Its prompt asks it to define "done" before acting. |
+| Break the request into actions | `update_plan` keeps an explicit, revisable plan, shown live and kept in the report. |
+| Use tools | A Playwright browser (`browser_navigate/snapshot/click/fill`), sandboxed workspace files (PDF to text), an allowlisted HTTP client, plus `remember`, `ask_user` and `finish`. |
+| Observe each result | Every browser action returns the resulting page state in the same call. HTTP status, downloads and alerts are surfaced explicitly. |
+| Decide the next step | A model-driven loop: the model picks each action from what it just observed. |
+| Remember discovered information | `remember` stores facts with their sources. Working memory is pinned into every request, so it survives context compaction, and the verifier and report receive it. |
+| Detect failure | Tool errors, HTTP 4xx/5xx, validation banners, stale element refs, policy blocks and harness guards all come back as observations. |
+| Retry / alternative | The harness retries only idempotent operations. State changes go through a **ledger** that blocks blind repeats. The ERP's UI and its API are alternate routes. |
+| Verify the outcome | The worker self-checks. Then an **independent verifier** re-checks the claims against live systems and the source document: a different model, a fresh context, read-only permissions, and the harness ledger as evidence. A failure triggers a repair round. |
+| Ask for clarification / approval | `ask_user` handles ambiguity. A **policy gate** requires a human yes for irreversible or outbound actions, and for repeating a write that already succeeded. |
+| Summary + evidence | `finish` returns a summary, result values, and claims with sources. The report adds the verifier's checks, the ledger, the plan, facts with sources, and a step-by-step trace with screenshots. |
 
 ---
 
@@ -80,74 +76,90 @@ A suggested 3-minute walkthrough using the console:
 
 ```mermaid
 flowchart LR
-    U[User: CLI or web console] -->|task| O[Orchestrator]
+    U[User: CLI or console] -->|task| O[Orchestrator]
     O --> W[Worker loop]
-    W <-->|messages / tool calls| M[(Claude)]
-    W --> G{Policy gate}
+    W -->|budgeted view of transcript| CB[Context builder]
+    CB <--> M[(Model: gpt-oss-120b via Groq<br/>or Claude)]
+    W --> G{Policy gate +<br/>write ledger}
     G -->|allow| T[Tools]
     G -->|ask| U
-    G -->|deny| W
+    G -->|deny / block duplicate| W
     T --> B[Browser - Playwright]
     T --> F[Workspace files]
-    T --> H[HTTP API client]
-    T --> C[plan / remember / ask_user]
+    T --> H[HTTP client]
     B & H --> E[(Simulated company:<br/>Mail, ERP, ERP API)]
-    W -->|finish: success| V[Verifier loop<br/>fresh context, read-only]
-    V <--> M
-    V -->|not verified| W
-    V -->|verdict| O
-    O --> R[Report + evidence]
+    W -->|finish: success| V[Verifier loop<br/>gpt-oss-20b, read-only]
+    V -->|not verified: repair| W
+    V -->|verdict| O --> R[Report + evidence]
     W & V -. events .-> L[(events.jsonl)] -.-> U
 ```
 
 | Module | Responsibility |
 |---|---|
-| `worker/agent.py` | The observe-decide-act loop, shared by worker and verifier. It validates every tool call, risk-classifies it, applies the approval gate, scrubs secrets from results, and runs the guards (repetition, error streaks, step budget, "stopped without finishing"). |
-| `worker/orchestrator.py` | Runs worker, then verifier, then an optional repair round. Maps outcomes to a final status and writes the report. |
-| `worker/tools/browser.py` | Page-to-text snapshot with element refs, actions by ref, download capture, screenshots, host allowlist, and dynamic risk classification from DOM facts. |
-| `worker/tools/{files,http,control}.py` | Workspace files (PDF parsing), allowlisted HTTP, and the plan / memory / ask / finish / verdict tools. |
-| `worker/policy.py` | `Risk` (read / write / external), approval modes, and generic classifiers for UI controls and HTTP methods. |
-| `worker/secrets.py` | `{{secret:NAME}}` references, resolved at execution time and masked in all outputs. |
-| `worker/llm.py` | Anthropic SDK wrapper (streaming, adaptive thinking, prompt caching, refusal fallback, typed error handling) plus `ScriptedLLM` for tests. |
-| `worker/events.py`, `worker/report.py` | Structured event log, which is the single source for the CLI, the console and the report. |
-| `console/` | FastAPI + SSE web console. Runs execute in background threads, and approvals and questions flow back through a queue. |
-| `mock_env/` | The simulated company "Northwind Traders": webmail with PDF invoices, an AP/ERP web app with login and validation, a JSON API, and fault injection. |
-| `environment.json` | The *environment profile*: which apps exist, their URLs, allowed hosts, and secret names. This is the only thing that describes Northwind to the worker. |
+| `worker/agent.py` | The observe-decide-act loop shared by worker and verifier. For every tool call it validates the arguments, classifies the risk, applies the approval gate, checks the **write ledger** for duplicates, scrubs secrets, and records the outcome. It also runs the guards: repetition, error streaks, step budget, and stopping without a report. |
+| `worker/context.py` | Builds each request as a view of the full transcript that fits the model's token budget. The latest observations stay verbatim, older turns become one-line digests, and the plan and memory are pinned. |
+| `worker/llm.py` | `AnthropicLLM` (streaming, adaptive thinking, prompt caching, refusal fallback) and `OpenAICompatLLM` for Groq (translation, header-driven pacing, calibrated token estimates, malformed-tool-call recovery, daily-quota model fallback). Plus `ScriptedLLM` for tests. |
+| `worker/orchestrator.py` | Runs worker, then verifier, then an optional repair round. Maps the outcome to a final status and writes the report. |
+| `worker/tools/browser.py` | Page-to-text snapshots with element refs; click and multi-field `browser_fill` by ref; downloads, screenshots and host allowlist. Risk classification and submission fingerprints come from generic DOM facts. |
+| `worker/tools/{files,http,control}.py` | Workspace files (PDF parsing), allowlisted HTTP, and plan / memory / ask / finish / verdict. |
+| `worker/policy.py`, `worker/secrets.py` | Risk classes and approval modes; `{{secret:NAME}}` references that are resolved at execution time and masked everywhere else. |
+| `worker/events.py`, `worker/report.py` | The event log behind the CLI, the console and the reports. |
+| `console/`, `mock_env/`, `environment.json` | The FastAPI + SSE console; the simulated company with fault injection; and the environment profile, which is the only place the worker learns about Northwind. |
 
 ### One step of the loop
 
-1. Claude receives the transcript and returns reasoning and one or more tool calls.
-2. For each call, the harness validates the arguments against the tool's schema and asks the tool to **classify this specific invocation**. Clicking "Save bill" in a POST form is `write`, clicking "Send" is `external`, following a link is `read`.
-3. The policy maps (risk, mode) to allow, ask or deny. *Ask* blocks on the human, and a decline goes back to the model as a result it must respect.
-4. The tool runs. Browser actions wait for the page to settle, collect any downloads, note the HTTP status, re-snapshot the page and save a screenshot as evidence.
-5. The result, with secrets masked, plus any guard notices goes back to Claude. Everything is emitted as events.
-6. The loop ends when the model calls `finish` (worker) or `submit_verdict` (verifier), or a guard stops it.
+1. The context builder turns the transcript into a request that fits the model's budget. The model returns reasoning and tool calls.
+2. Each call is schema-checked. The tool then **classifies this specific invocation** from generic facts: a submit control in a POST form is `write`, a control labelled send / pay / delete is `external`, a link is `read`.
+3. The policy maps (risk, mode) to allow, ask or deny. For state changes, the **ledger** compares the call's fingerprint (method, target, field values) with what already happened.
+4. The tool runs. Browser actions wait for the page to settle, collect downloads, note the HTTP status, re-snapshot the page, and save a screenshot as evidence. The outcome is recorded in the ledger as applied, rejected or unknown.
+5. The masked result, plus any guard notices, goes back to the model. The loop ends at `finish` / `submit_verdict`, or when a guard stops it.
 
 ---
 
 ## Key design decisions
 
-**1. A narrow but real environment rather than a broad, mocked one.** The brief rewards a prototype that genuinely works. The Northwind app is small, but it has the properties that make real back-office work hard: information spread across systems (inbox, PDF, reference CSV, ERP), authentication, strict input formats (dates as DD/MM/YYYY, no thousands separators), duplicate detection, distractors (an older Acme invoice that is already entered, a payment reminder, a marketing email), and an ambiguous vendor name (two "Globex" companies). Fault injection makes the hard paths reproducible.
+**1. A narrow but real environment.** Northwind is small, but it has what makes back-office work hard:
 
-**2. The browser is observed as text with element refs, not raw HTML or pixels.** The snapshot renders the page in reading order, with each control tagged: `[e7 textbox "Due date" value="" placeholder="dd/mm/yyyy"]`, tables as rows, alerts marked `[alert]`. This works on any reasonably semantic web app without per-site code, costs a fraction of the tokens of HTML or screenshots, and makes actions unambiguous. Screenshots are still captured after every action as human-facing evidence, and the model can request one (`browser_screenshot`) when layout matters. Pixel-based computer use would generalise to non-web apps; that is in "next steps".
+- information spread across an inbox, PDF attachments, a reference CSV and an ERP
+- authentication, and strict input formats (DD/MM/YYYY dates, no thousands separators)
+- duplicate detection
+- distractors: an older Acme invoice that's already entered, a payment reminder, a marketing email
+- an ambiguous vendor name: two companies called "Globex"
 
-**3. Act and observe in one round trip.** Every mutating browser action returns the resulting page. This halves the number of model turns and, more importantly, means the model always reasons from the real outcome, never from its expectation.
+Fault injection makes the hard paths reproducible: a save that commits but answers 502, through either the UI or the API, and a session that expires mid-task.
 
-**4. Safety lives in a policy gate, not in the prompt.** Tools only report *how risky this particular call is*, using generic facts: is it a submit control in a POST form, does its label say send / pay / delete / approve, which HTTP method is it. One policy decides allow, ask or deny per mode (`guarded`, `strict`, `autonomous`, `read_only`). The same tools serve the verifier under `read_only`, so the verifier *cannot* change state, by construction. Approval prompts show the human exactly what will happen, including the form contents being submitted.
+**2. The browser is read as text with refs, not as HTML or pixels.** Snapshots render the page in reading order with each control tagged, for example `[e7 textbox "Due date" value="" placeholder="dd/mm/yyyy"]`, tables as rows, and alerts marked `[alert]`. This works on any reasonably semantic web app without per-site code, costs a fraction of the tokens of HTML, and makes actions unambiguous. Screenshots are still captured after every action as evidence for humans.
 
-**5. Credentials are references, never values.** The model types `{{secret:erp_password}}`. The harness substitutes the value at execution time, and the value is masked out of every tool result, event and report. Password fields render as `********` in snapshots.
+**3. Act and observe in one round trip, and do more per action.** Every mutating action returns the resulting page. `browser_fill` sets a whole form (text, dropdowns, checkboxes) and optionally submits it in one call; `remember` takes several facts at once. With rate limits, every model turn costs about 3k tokens and about 20 seconds, so fewer, larger actions are the main efficiency lever (see the live results below).
 
-**6. Retries are split by idempotency.** The harness silently retries navigation and GET requests on transient errors, which wastes no model turns. It **never** auto-retries anything that creates or sends data. After a 5xx the model is told explicitly that the outcome is unknown and that it must check state before repeating. The *flaky save* scenario exists to test exactly this: the bill is committed but the user sees a 502, and a naive retry creates a duplicate.
+**4. A token-budgeted context instead of an ever-growing transcript.** The Groq free tier allows 8,000 tokens per minute, and the system prompt plus tool schemas alone measured 1,900 tokens. Each request is therefore a view of the transcript:
 
-**7. Verification by a second agent that didn't do the work.** Agents are prone to convincing themselves they succeeded. After the worker calls `finish(success)`, a verifier with a fresh context, an adversarial brief, read-only permissions, and access to the original task (not just the worker's story) re-derives what must be true and checks primary sources: the ERP record or API, and the source document. If it isn't verified, its failed checks go back to the worker for a bounded repair round. The final status distinguishes `completed_verified` from `completed_unverified`, so "done" carries a confidence level.
+- the task, verbatim
+- the turns covering the last three *observations*, verbatim (plan and memory updates don't use up this window)
+- every older turn as a digest line (`browser_click({"ref":"e7"}) -> Clicked e7 ("Your Acme Cloud invoice…") | URL: …`); small results such as API answers survive whole
+- the current plan and working memory, always
 
-**8. Guards for the ways agents go wrong.** Identical repeated calls get a "change approach" notice. Three consecutive tool failures prompt it to step back and replan, and seven abort the run. A step budget triggers a wrap-up warning near the end. Ending a turn without calling a tool is nudged twice, then treated as no progress. Every abnormal end still produces an honest status and a report.
+The worker is told that older steps are summarised, so anything it needs later must go in memory. Memory isn't decoration here: it's what makes compaction safe. The full transcript is kept for the trace and report. On Claude the full history is sent, because prompt caching makes it cheap.
 
-**9. Generalisation through configuration.** Nothing in `worker/` knows about invoices, Northwind or ERPs. The task arrives as free text, the environment arrives as a JSON profile, and tools are generic. The five example tasks in `tasks.json` (invoice entry, ambiguous request, backlog reconciliation, outbound email, CSV report) all run on unchanged code. Pointing the worker at a different set of web apps means writing a new `environment.json`.
+**5. Pacing from the server's own signals.** The Groq adapter reads the `x-ratelimit-*` headers after each response and waits until the token bucket can cover the next request, instead of collecting 429s. It also calibrates its characters-per-token estimate from the server's reported `prompt_tokens`. A 429 waits for the server's `retry-after`. A daily-quota 429 switches to the fallback model. A "request too large" shrinks the budget and rebuilds the request. A malformed tool call is re-asked with an explicit correction.
 
-**10. One event log feeds everything.** CLI output, the live console, the HTML/Markdown report and the tests all consume the same structured events. This made debugging straightforward (`events.jsonl` is a complete replay of what the model saw and did) and keeps the UIs thin.
+**6. Safety lives in a policy gate, not in the prompt.** Tools only report how risky a particular call is. One policy decides allow, ask or deny per mode (`guarded`, `strict`, `autonomous`, `read_only`). The verifier runs the same tools under `read_only`, so it *cannot* change state, by construction. Approval prompts show exactly what will be submitted, including the form contents.
 
-**11. Model choices.** The worker defaults to Claude Opus 5 (`claude-opus-5`, override with `WORKER_MODEL`). It uses adaptive thinking with summarised reasoning, which the console displays, `effort: high` for agentic reliability, streaming, and automatic prompt caching of the growing transcript. Server-side refusal fallback is enabled when the account supports it and is switched off automatically if not. The system prompts are static per run so the cache prefix stays stable; the date and task go in the first message. The prompts state principles (observe before acting, check before repeating writes, verify against the system of record) rather than scripting steps.
+**7. Duplicates are prevented by the harness, not by hoping the model is careful.** Every state change is fingerprinted (method, target, field values) and recorded with its observed outcome:
+
+- **Applied:** an identical resubmission needs explicit human approval, flagged as a possible duplicate.
+- **Unknown** (5xx, or no response): an identical resubmission is refused until the worker has successfully loaded a different page or made an API read. Returning to the form or re-reading the error page doesn't count.
+- **Rejected:** retries are free.
+
+Navigation and GETs are retried silently because they're idempotent; nothing that writes is ever retried automatically.
+
+**8. Verification by a different agent, on a different model.** After the worker claims success, a verifier with a fresh context and an adversarial brief re-derives what must be true. It checks primary sources itself: the ERP record or API, and the original document. On Groq it runs on `gpt-oss-20b` while the worker uses `gpt-oss-120b`. That's more independent than self-review, and since rate limits are per model, it doubles throughput. The verifier also receives the harness ledger, evidence the worker can't edit. A "not verified" verdict sends its failed checks back to the worker for a bounded repair round. The final status distinguishes `completed_verified` from `completed_unverified`.
+
+**9. Guards for the ways agents go wrong.** Identical repeated calls get a "change approach" notice. Three consecutive tool failures prompt it to step back and replan; seven abort the run. A step budget triggers a wrap-up warning near the end. Ending a turn without calling a tool is nudged, then stopped. Every abnormal end still produces an honest status and a report.
+
+**10. Generalisation through configuration.** Nothing in `worker/` knows about invoices or Northwind. Tasks are free text, the environment is a JSON profile, and the tools are generic. All five example tasks (invoice entry, ambiguous request, backlog reconciliation, outbound email, CSV report) run on unchanged code. The model provider sits behind one interface; Claude and Groq share everything else.
+
+**11. One event log feeds everything.** The CLI, the live console, the reports and the tests all consume the same structured events. `events.jsonl` is a complete record of what the model saw and did, which made debugging live runs straightforward.
 
 ---
 
@@ -155,105 +167,100 @@ flowchart LR
 
 | Situation | What happens |
 |---|---|
-| Form validation error (e.g. `4,812.50`) | The page re-renders with an `[alert]`. The result says the request was rejected (HTTP 422), and the model reads the reason and corrects the field. |
-| Server 502 after a submit | The result carries an "outcome unknown, check state before retrying" warning. The model searches the bill list, finds the committed bill, and doesn't resubmit. |
-| Session expires | The ERP redirects to sign-in with a "session expired" alert. The model signs in again and is returned to the page it was on. |
-| Duplicate entry attempt | The ERP rejects it and names the existing bill, which tells the model it was already done. |
-| Stale element ref | A clear error says to use refs from the latest page state. |
-| Navigation to a non-allowlisted host | Blocked by policy, with the reason returned to the model. |
-| Human declines an approval | The model is told not to retry, and finishes as `blocked` or finds another route. |
+| Form validation error | The page re-renders with an `[alert]` and the result says the request was rejected (HTTP 4xx). The model fixes the field; the ledger records `rejected`, so a retry is free. |
+| Save answers 502 after committing (UI or API) | The result warns that the outcome is unknown. An identical resubmit is **blocked by the harness** until the worker checks state elsewhere, where it finds the committed record. |
+| Identical resubmit after a success | Needs human approval, flagged as a possible duplicate (refused outright in `autonomous` mode). |
+| Session expires | The ERP redirects to sign-in with an alert; the worker signs in again and is returned to the page it was on. |
+| Rate limit (tokens per minute) | Proactive waits from the `x-ratelimit-*` headers; on a 429, it waits for `retry-after`. |
+| Daily quota exhausted | Switches to the fallback model, logged in the trace. |
+| Request too large | Shrinks the token budget, rebuilds the request, retries. |
+| Malformed tool call (`tool_use_failed`) | Re-asks with an explicit correction, up to twice. |
+| Stale element ref, disallowed host | A clear error explains how to recover, or a policy block names the allowed hosts. |
+| Human declines an approval | The model is told not to retry, and finishes `blocked` or takes another route. |
 | Model claims success incorrectly | The verifier reports `not_verified` with failed checks, and the worker gets a repair round (max 2 verification rounds). |
-| Looping / error spiral / out of steps | Guard notices first, then a hard stop with status `failed` and a report. |
-| Missing API key, API down, refusal | Typed SDK errors become a clean `failed` result with an explanation. Nothing crashes the run silently. |
+| Looping / error spiral / out of steps | Guard notices first, then a hard stop with status `failed` and a full report. |
+| Missing key, API down, refusal | A clean `failed` result with an explanation; the report is still written. |
 
 ---
 
+## Live results
+
+Real runs against the simulated company on Groq's free tier (`gpt-oss-120b` worker, `gpt-oss-20b` verifier, `guarded` mode). Raw traces are in `runs/` locally; the demo video shows the recorded runs.
+
+| Run | Outcome | Worker / verifier steps | Wall time (rate-limit waiting) | Tokens in / out | Largest request |
+|---|---|---|---|---|---|
+| Invoice → ERP, normal (before batching) | `completed_verified`, 4/4 checks | 22 / 7 | 8.9 min (8.3 min) | 87.6k / 7.0k | 3,803 (cap 8,000) |
+
+In the first run the worker picked the newest Acme invoice (not the older, already-entered one, the reminder or the marketing email). It read the PDF, looked up the vendor ID through the API, created bill AP-1043 with exactly the right fields, and confirmed it with a GET. The verifier re-read the PDF, queried the ERP, and checked on its own that no newer Acme invoice exists. The run also exposed waste: the worker recorded one fact per turn, and those turns pushed the PDF out of its recent-context window, so it re-read the file and repeated the vendor lookup. That's why `remember` now takes several facts per call, plan and memory updates no longer consume the verbatim window, and small results survive whole in digests.
+
 ## Testing
 
-`pytest -q` runs 15 tests in about 20 s with no API key. The integration tests use the **real harness, real Chromium and the real mock app**; only the model is replaced, by a scripted policy (`ScriptedLLM`) that reads the same tool results Claude would see. They cover:
+`pytest -q` runs 20 tests in about 45 s with no API key. The model is replaced by a scripted policy that reads the same tool results the model would see; everything else is real: harness, Chromium, the mock app, and the SDK where it's tested.
 
-- the full invoice flow, with a deliberate validation error and an ambiguous 502, ending with exactly one bill, matching fields, no secret values in the trace, screenshots, and a verified report
-- the verifier being unable to write: its POST is refused by the policy gate
-- outbound email requiring approval, with the approval prompt showing the form contents, and a decline leaving nothing sent
-- a failed verification triggering a repair through the ERP API
-- step budget and repetition guards
-- snapshot rendering (password masking) and host allowlisting
+- **End to end:** the invoice flow with a validation error and an ambiguous 502, run twice: once with the full context, once **under a 2,200-token budget**, asserting every request stayed under it and that older steps arrived as digests plus memory.
+- **Duplicate protection:** a blind resubmit after a 502 is blocked; after checking the bill list it's allowed (and the server rejects the duplicate); an identical resubmit after success requests approval.
+- **Approvals, verification and guards:** outbound email needs approval (the prompt shows the form contents, and a decline sends nothing); a failed verification triggers a repair through the API; step-budget and repetition guards; password masking and host allowlisting.
+- **Claude path contract tests:** a local fake of the Messages API that speaks the real SSE streaming protocol. These check request shape (adaptive thinking, effort, caching, tools), thinking-signature replay, tool-result pairing, image blocks, usage accounting, the 429/500 retry path, the fallback auto-disable on 400, and auth-failure handling.
+- **Evaluation scoring:** unit tests for the live evaluation's checks, so its numbers mean something.
 
-Unit tests cover risk classification, policy modes, secret resolution and masking, argument validation, the guard, and the evaluation's own scoring functions.
+## Live evaluation and demo recording
 
-These tests prove the plumbing, not model judgment. The live evaluation below measures model judgment.
+`python -m evals.run` runs eight cases against the real model and scores each one from the mock app's **actual state**, not from what the worker says:
 
-## Live evaluation
+- the invoice task (normal, flaky save, session timeout)
+- the ambiguous vendor
+- the backlog reconciliation
+- email approved, and email declined
+- the CSV report
 
-`python -m evals.run` runs every example task, plus the failure scenarios, against the real model. It then scores each run from the simulated company's **actual state** (via `/_admin/state`), not from what the worker says it did:
-
-| Case | What must be true afterwards |
-|---|---|
-| `invoice/normal` | Exactly one bill for ACME-2026-0917 with the right vendor, amount, currency, dates and category; final status `completed_verified` |
-| `invoice/flaky-save` | Same, although the save returns a 502 after committing, so a blind retry would create a duplicate |
-| `invoice/session-timeout` | Same, although the ERP session expires mid-task |
-| `ambiguous-vendor` | Either it asked which Globex was meant, or it entered GX-55120 correctly (GL-7781 is already entered); no duplicates |
-| `backlog` | The three missing bills are each entered exactly once with correct fields; no duplicates of existing ones |
-| `email/approved` | One email to Globex Logistics mentioning GL-7781 and its due date (14 Oct 2026), sent only after an approval request |
-| `email/declined` | Nothing sent, and the run does not claim success |
-| `report-file` | A CSV in the workspace containing the open bill and excluding the paid one |
-
-Options: `--repeat N` for success rates, `--only <substring>` to run a subset. Results go to [`evals/results.md`](evals/results.md) and `evals/results.json`, and each run's full trace stays in `runs/`.
-
-## Recording the demo
-
-`python -m demo.record` starts the mock environment and the console, then drives the console in a Playwright browser with video recording on. It runs the invoice task under the *flaky save* fault and the approval-gated email task, approves through the UI, and opens the evidence report. Output: `docs/demo.webm`, `docs/console.png` and `docs/report.png`. The recording is the real console during real runs; the only addition is a caption naming the scenario.
+Use `--repeat N` for success rates and `--only <substring>` for a subset. `python -m demo.record` records the console during real runs and encodes a sped-up MP4 with ffmpeg.
 
 ---
 
 ## Known limitations
 
-- **Web apps only.** There is no desktop or pixel-level computer use. Pages that rely on canvas or custom widgets without semantic HTML would be hard to operate from the text snapshot.
-- **One simulated company.** The worker code is generic, but it has only been exercised against Northwind. Real sites bring CAPTCHAs, MFA, iframes, shadow DOM and heavy client-side rendering, none of which are handled specially.
-- **Risk classification is heuristic.** It uses form method and control labels. It is conservative ("Cancel" is treated as external) and could miss an irreversible action behind an innocuous label. A production system would let app owners annotate actions.
-- **The context grows linearly.** Long tasks keep every snapshot in the transcript, which is fine for the tens of steps here. Very long tasks would need context editing or summarisation.
-- **No persistence across runs.** Working memory is per run, and runs cannot be resumed after a crash.
-- **The verifier shares the worker's model and browser session.** A different model, or a separately authenticated session, would make verification more independent.
-- **A small evaluation set.** The live evaluation has 8 cases in one environment. That catches regressions and obvious failures, but it isn't a statistically strong measure of reliability.
+- **Throughput on the free tier.** About 20 seconds per step, and roughly 90% of wall time is rate-limit pacing. Groq also caps tokens per day per model, so a full multi-repeat evaluation doesn't fit in one day's free quota. Paid tiers or Claude remove both limits without code changes.
+- **Text-only model on Groq.** `gpt-oss` can't see screenshots, so the screenshot tool is withheld from it. Screenshots are still captured as evidence. Claude gets the tool.
+- **Web apps only.** There's no desktop or pixel-level computer use. Canvas-heavy or non-semantic UIs would be hard to operate from the text snapshot.
+- **One simulated company.** The code is generic but has only been exercised against Northwind. Real sites add CAPTCHAs, MFA, iframes, shadow DOM and heavy client-side rendering.
+- **Heuristic risk classification and fingerprints.** They use form method, control labels and field values. They're conservative ("Cancel" counts as external) and could miss an irreversible action behind an innocuous label. A production system would let app owners annotate actions.
+- **No persistence across runs.** Working memory and the ledger are per run, and a crashed run can't be resumed.
 - **Single user, local only.** The console has no authentication.
 
 ## What I would build next
 
-1. **A bigger evaluation:** more tasks, a second simulated environment with different apps to test generalisation properly, many repeats per case, and sweeps over model, effort level and prompt version, tracking success rate, cost and steps.
-2. **A computer-use fallback** for non-semantic UIs and desktop apps, using screenshots plus mouse and keyboard when the text snapshot is insufficient.
-3. **Action annotations in the environment profile** (e.g. "POST /erp/bills is a financial write; bills > $10k require CFO approval"), so business rules from documents like the CFO's email become enforced policy, not just model knowledge.
-4. **Durable runs:** checkpoint the transcript and state so a run can pause for approval for hours and then resume, and keep cross-run memory of learned procedures (e.g. "the ERP wants DD/MM/YYYY").
-5. **Context management** for long tasks: clear stale snapshots and summarise completed sub-goals.
-6. **Parallel sub-agents** for fan-out tasks (e.g. reconciling 50 invoices), coordinated by the orchestrator.
-7. **Stronger independence for verification:** a different model, a separate credential, and checks generated from the task before the worker starts.
+1. **A larger evaluation:** more tasks, a second environment with different apps to test generalisation, and many repeats per case, tracking success rate, steps, tokens and time per model and prompt version.
+2. **Action annotations in the environment profile** (e.g. "POST /erp/bills is a financial write; over $10k needs CFO approval"), so business rules like the CFO's email become enforced policy, not just model knowledge.
+3. **Durable runs:** checkpoint the transcript, memory and ledger so a run can wait hours for an approval and then resume, plus cross-run memory of learned procedures (e.g. "this ERP wants DD/MM/YYYY").
+4. **A computer-use fallback** for non-semantic UIs and desktop apps, with screenshots and mouse/keyboard on a vision model.
+5. **Parallel sub-agents** for fan-out work (e.g. reconciling 50 invoices), sharing one ledger so duplicates are impossible across workers.
 
 ## Assumptions
 
-- The worker operates on behalf of an AP team member who may enter bills into the ERP. Internal record creation that the task explicitly asks for is permitted without confirmation. Anything outbound or irreversible (sending email, paying, deleting) needs approval in the default mode.
-- "Latest invoice" means the most recent invoice document from that vendor, not reminders or marketing emails. Bills are recorded in the invoice's currency, and the category comes from the AP team's reference file.
-- The worker knows which company apps exist and their URLs (via the profile), like an employee with bookmarks. It is not told how to use them.
-- Credentials are test values for the simulated app, stored in `.env`, and never shown to the model.
+- The worker acts for an AP team member who may enter bills. Internal record creation that the task explicitly asks for runs without confirmation. Outbound or irreversible actions (sending email, paying, deleting) need approval in the default mode.
+- "Latest invoice" means the most recent invoice document from that vendor, not reminders or marketing. Bills are recorded in the invoice's currency, with the category from the AP team's reference file.
+- The worker knows which company apps exist and their URLs (via the profile), like an employee with bookmarks. It isn't told how to use them.
+- Credentials are test values for the simulated app. They live in `.env` and are never shown to the model.
 
 ## Models, APIs and components used
 
-- **Claude Opus 5** via the **Anthropic Python SDK** (`anthropic` 1.x): Messages API with tool use, adaptive thinking, streaming, prompt caching, and server-side refusal fallback (beta).
-- **Playwright** (Chromium) for browser automation.
-- **FastAPI**, **Uvicorn**, **Jinja2** for the simulated company and the web console. **Server-Sent Events** carry live updates.
-- **pypdf** to extract PDF text, **fpdf2** to generate invoice PDFs, **httpx** for HTTP calls, **python-dotenv** for configuration, **pytest** for tests.
-- No agent framework. The loop, policy, verification and guards are implemented directly (the worker package is about 2.2k lines) so every behavior is visible and testable.
+- **Groq API** (OpenAI-compatible chat completions): `openai/gpt-oss-120b` for the worker, `openai/gpt-oss-20b` for the verifier. Called with `httpx` directly so the adapter controls pacing and retries.
+- **Anthropic API** via the official Python SDK (`anthropic` 1.x), as the alternative provider: Claude Opus 5 with tool use, adaptive thinking, streaming, prompt caching, and server-side refusal fallback.
+- **Playwright** (Chromium); **FastAPI**, **Uvicorn** and **Jinja2** for the mock company and console; Server-Sent Events for live updates.
+- **pypdf** (PDF text), **fpdf2** (invoice PDFs), **httpx**, **python-dotenv**, **pytest**, and **ffmpeg** (optional, for the demo video).
+- No agent framework. The loop, context builder, policy, ledger, verification and guards are implemented directly so every behavior is visible and testable.
 - Built with AI coding assistance (Claude Code).
 
 ## Project layout
 
 ```
-worker/            agent loop, orchestrator, policy, secrets, LLM wrapper, report, CLI
+worker/            agent loop, context builder, orchestrator, policy, secrets, LLM adapters, report, CLI
   tools/           browser, files, http, control (plan/remember/ask/finish/verdict)
 console/           web console (FastAPI + SSE) and its single-page UI
 mock_env/          simulated company: mail, ERP, API, PDF invoices, fault injection
 environment.json   environment profile (apps, allowed hosts, secret names)
 workspace/         the worker's file sandbox (reference CSV; downloads land here)
-tasks.json         example tasks
-tests/             unit + end-to-end tests (scripted model, real browser and app)
 evals/             live evaluation: tasks x failure scenarios, scored from environment state
 demo/              records the demo video by driving the console
+tests/             unit, end-to-end, ledger, budgeted-context and SDK contract tests
 ```
