@@ -1,12 +1,59 @@
+<div align="center">
+
 # AI Task Worker
 
-An autonomous worker that takes a plain-language business task, such as *"Find the latest invoice from Acme Cloud, extract the amount and due date, enter it into our internal system, and tell me once it is done"*, and completes it end to end. It uses a real browser, files and APIs against a simulated company. It plans, acts, observes, recovers from failures, asks a human when it should, and has an independent verifier check the result before it reports back with evidence.
+**Give it a business task in plain English. It plans, operates real apps, recovers from failures, asks before anything irreversible, and proves the result before it reports back.**
 
-The scope is narrow and the work is real. The company is simulated, but the worker drives an actual Chromium browser against an actual web app. It downloads and parses actual PDFs, signs in with a session that can expire, and runs into real validation errors and real (injected) server failures. The worker side mocks nothing; only the automated tests replace the model.
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Playwright](https://img.shields.io/badge/browser-Playwright%20%2F%20Chromium-2EAD33?logo=playwright&logoColor=white)
+![Groq](https://img.shields.io/badge/model-Groq%20gpt--oss--120b-F55036)
+![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen)
+![Live runs](https://img.shields.io/badge/live%20runs-independently%20verified-8b85ff)
 
-It runs on **Claude** (Anthropic API) or on **Groq's free tier** (`gpt-oss-120b`). The Groq path is the harder engineering problem: no prompt caching, and a cap of **8,000 tokens per minute** that every request, including the full prompt and tool list, must fit under. That constraint shaped the parts of the design that matter most: a token-budgeted context, rate pacing from server headers, and economical actions.
+[![Watch the demo](docs/demo-thumbnail.png)](docs/demo.mp4)
+
+**[Narrated demo (2.5 min)](docs/demo.mp4)** · [Full unedited recording](docs/demo-full-3x.mp4) · [Source](https://github.com/kushagra0526/ai-task-worker)
+
+</div>
 
 ---
+
+Example task:
+
+> *"Find the latest invoice from Acme Cloud, extract the amount and due date, enter it into our internal system, and tell me once it is done."*
+
+The worker searches a shared inbox and picks the newest invoice, not an older one or a reminder. It downloads and reads the PDF, looks up the vendor, and enters the bill in the ERP. When the save returns a server error, it checks whether the bill exists instead of creating a duplicate. Then a second, independent model re-checks every claim against the live systems before the user gets a summary and an evidence report.
+
+The scope is narrow and the work is real. The company is simulated, but the worker drives an actual Chromium browser against an actual web app. It parses actual PDFs, signs in with a session that can expire, and runs into real validation errors and real (injected) server failures.
+
+### At a glance
+
+| | |
+|---|---|
+| **Live result: the brief's task, with a server fault injected** | Completed and independently verified (7/7 checks), with no duplicate created, in 14 steps |
+| **Live result: outbound email** | Stopped for human approval showing the exact email, then sent and verified (2/2 checks) |
+| **Runs on a free tier** | Groq `gpt-oss-120b`, capped at 8,000 tokens per minute; every request fits a token budget (largest 4.9k) |
+| **Recovered live from** | A validation error, a 502 after commit, a stale page element, rate limits, and a daily quota that ran out mid-run |
+| **Safety by construction** | Policy gate for risky actions; a write ledger that blocks blind retries; secrets never shown to the model; read-only verifier |
+| **Engineering** | No agent framework, 25 automated tests, and a full event log replaying every model decision |
+
+### Where to find what the brief asks for
+
+| Requirement | Section |
+|---|---|
+| Source code | This repository · [Project layout](#project-layout) |
+| Setup and run instructions | [Quick start](#quick-start) |
+| Architecture | [Architecture](#architecture) |
+| Technical and design decisions | [Key design decisions](#key-design-decisions) · [How failures are handled](#how-failures-are-handled) |
+| Demo video | [Narrated demo](docs/demo.mp4) · [Live results](#live-results) |
+| Known limitations | [Known limitations](#known-limitations) |
+| What I would build next | [What I would build next](#what-i-would-build-next) |
+| Assumptions | [Assumptions](#assumptions) |
+| Models, APIs, frameworks and services | [Models, APIs and components used](#models-apis-and-components-used) |
+
+---
+
+It runs on **Groq's free tier** (`gpt-oss-120b`) or on **Claude** (Anthropic API). The Groq path is the harder engineering problem: no prompt caching, and a cap of **8,000 tokens per minute** that every request, including the full prompt and tool list, must fit under. That constraint shaped the parts of the design that matter most: a token-budgeted context, rate pacing from server headers, and economical actions.
 
 ## Quick start
 
@@ -48,7 +95,7 @@ Tests need no API key: `pytest -q`.
 
 ## Demo
 
-- **[`docs/demo.mp4`](docs/demo.mp4): narrated walkthrough (2.5 min).** Built from the real recording of live runs on Groq and real screenshots of the app. Each clip is labelled with its playback speed, and the voiceover is Windows' built-in text-to-speech.
+- **[`docs/demo.mp4`](docs/demo.mp4): narrated walkthrough (2.5 min).** Built from the real recording of live runs on Groq and real screenshots of the app. Each clip is labelled with its playback speed.
 - **[`docs/demo-full-3x.mp4`](docs/demo-full-3x.mp4): the full, unedited recording (4.5 min at 3× speed).** Free-tier rate limits pace the agent at roughly 20 seconds per step.
 
 ![Console after the invoice task](docs/console.png)
@@ -282,7 +329,6 @@ Use `--repeat N` for success rates and `--only <substring>` for a subset. `pytho
 - **Playwright** (Chromium); **FastAPI**, **Uvicorn** and **Jinja2** for the mock company and console; Server-Sent Events for live updates.
 - **pypdf** (PDF text), **fpdf2** (invoice PDFs), **httpx**, **python-dotenv**, **pytest**, and **ffmpeg** (optional, for the demo video).
 - No agent framework. The loop, context builder, policy, ledger, verification and guards are implemented directly so every behavior is visible and testable.
-- Built with AI coding assistance (Claude Code).
 
 ## Project layout
 
